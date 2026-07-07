@@ -6,6 +6,7 @@ namespace SimulaSharp.Kernel.Primitives;
 /// </summary>
 public readonly struct SimYield
 {
+    /// <summary>Microseconds to wait before the coroutine is resumed (0 = next processing pass).</summary>
     public readonly long DelayUs;
 
     private SimYield(long delayUs) => DelayUs = delayUs;
