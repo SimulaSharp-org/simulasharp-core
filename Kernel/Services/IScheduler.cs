@@ -5,9 +5,9 @@ namespace SimulaSharp.Kernel.Services;
 /// <summary>
 /// The scheduling surface a model uses to run work on its own SimSite. Delays are
 /// relative to the clock's current time. Actions receive no time argument — read
-/// the clock (<see cref="IClock.NowUs"/>) when "now" is needed.
+/// the clock (<see cref="IClock.SimNowUs"/>) when "now" is needed.
 /// </summary>
-public interface IScheduler
+public interface IScheduler : IDisposable
 {
     // One-shot and periodic actions
     int AddEvent(Action action, long delayUs);

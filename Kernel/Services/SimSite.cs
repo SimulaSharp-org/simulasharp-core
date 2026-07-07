@@ -20,7 +20,7 @@ namespace SimulaSharp.Kernel.Services;
 /// While the clock is paused the site blocks, consuming no CPU.
 /// </para>
 /// </summary>
-public sealed class SimSite : IScheduler, IDisposable
+public sealed class SimSite : IScheduler
 {
     private readonly string _name;
     private readonly IClock _clock;
@@ -95,15 +95,15 @@ public sealed class SimSite : IScheduler, IDisposable
 
     /// <inheritdoc/>
     public int AddEvent(Action action, long delayUs) =>
-        _events.AddEvent(action, _clock.NowUs + delayUs);
+        _events.AddEvent(action, _clock.SimNowUs + delayUs);
 
     /// <inheritdoc/>
     public int AddPeriodicEvent(Action action, long periodUs) =>
-        _events.AddPeriodic(action, _clock.NowUs + periodUs, periodUs);
+        _events.AddPeriodic(action, _clock.SimNowUs + periodUs, periodUs);
 
     /// <inheritdoc/>
     public int AddCoroutine(Func<IEnumerator<SimYield>> factory, long delayUs) =>
-        _events.AddCoroutine(factory, _clock.NowUs + delayUs);
+        _events.AddCoroutine(factory, _clock.SimNowUs + delayUs);
 
     /// <inheritdoc/>
     public void RemoveEvent(int id) => _events.RemoveEvent(id);
@@ -157,7 +157,7 @@ public sealed class SimSite : IScheduler, IDisposable
             while (_inbox.TryDequeue(out var work))
                 work();
 
-            _events.ProcessDue(_clock.NowUs);
+            _events.ProcessDue(_clock.SimNowUs);
 
             Thread.SpinWait(1);
         }

@@ -1,3 +1,5 @@
+using SimulaSharp.Kernel.Primitives;
+
 namespace SimulaSharp.Kernel.Services;
 
 /// <summary>
@@ -9,10 +11,17 @@ namespace SimulaSharp.Kernel.Services;
 public interface IClock : IDisposable
 {
     /// <summary>Elapsed simulation time in microseconds (the volatile horizon).</summary>
-    long NowUs { get; }
+    long SimNowUs { get; }
 
-    /// <summary>Absolute mission time in microseconds (mission epoch + <see cref="NowUs"/>).</summary>
+    /// <summary>Absolute mission time in microseconds (mission epoch + <see cref="SimNowUs"/>).</summary>
     long MissionNowUs { get; }
+
+    /// <summary>
+    /// Captures sim time and mission time together from a single horizon read, so the
+    /// two are guaranteed consistent (unlike reading <see cref="SimNowUs"/> and
+    /// <see cref="MissionNowUs"/> in sequence).
+    /// </summary>
+    TimeSnapshot Now();
 
     /// <summary>True while time is advancing (i.e. started and not paused).</summary>
     bool IsRunning { get; }

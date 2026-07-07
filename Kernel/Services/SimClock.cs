@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using SimulaSharp.Kernel.Primitives;
 
 namespace SimulaSharp.Kernel.Services;
 
@@ -64,10 +65,17 @@ public sealed class SimClock : IClock
     }
 
     /// <inheritdoc/>
-    public long NowUs => Volatile.Read(ref _horizonUs);
+    public long SimNowUs => Volatile.Read(ref _horizonUs);
 
     /// <inheritdoc/>
     public long MissionNowUs => _missionEpochUs + Volatile.Read(ref _horizonUs);
+
+    /// <inheritdoc/>
+    public TimeSnapshot Now()
+    {
+        long h = Volatile.Read(ref _horizonUs);   // single read → consistent pair
+        return new TimeSnapshot(h, _missionEpochUs + h);
+    }
 
     /// <inheritdoc/>
     public bool IsRunning => _running;
