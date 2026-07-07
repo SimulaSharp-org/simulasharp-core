@@ -9,8 +9,4 @@
         <RootNamespace>SimulaSharp.Kernel</RootNamespace>
     </PropertyGroup>
 
-    <ItemGroup>
-      <Folder Include="Model\" />
-    </ItemGroup>
-
 </Project>
