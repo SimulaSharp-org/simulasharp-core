@@ -69,7 +69,8 @@ public sealed class RefGenerator : IIncrementalGenerator
             sb.AppendLine("{");
         }
 
-        sb.Append(access).Append(" sealed class ").Append(refName).AppendLine();
+        sb.Append(access).Append(" sealed class ").Append(refName)
+          .AppendLine(" : global::SimulaSharp.Kernel.Model.IModelRef");
         sb.AppendLine("{");
         sb.Append("    private readonly ").Append(target).AppendLine(" _target;");
         sb.Append("    public ").Append(refName).Append('(').Append(target).AppendLine(" target) => _target = target;");
