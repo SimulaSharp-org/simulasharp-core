@@ -14,7 +14,7 @@ namespace SimulaSharp.Kernel.Services;
 /// implemented; for now sites are created directly via <see cref="CreateSite"/>.
 /// </para>
 /// </summary>
-public sealed class Simulator : IDisposable
+public sealed class Simulator : ISimulator
 {
     private readonly SimClock _clock;
     private readonly List<SimSite> _sites = [];
@@ -27,8 +27,11 @@ public sealed class Simulator : IDisposable
         _clock = new SimClock(missionStart);
     }
 
-    /// <summary>The simulation clock shared by every site.</summary>
+    /// <inheritdoc/>
     public IClock Clock => _clock;
+
+    /// <inheritdoc/>
+    public bool IsRunning => _clock.IsRunning;
 
     /// <summary>The sites currently registered with this simulation.</summary>
     public IReadOnlyList<SimSite> Sites => _sites;
@@ -70,9 +73,23 @@ public sealed class Simulator : IDisposable
     /// <summary>Freezes time; every site parks until the next <see cref="Start"/>.</summary>
     public void Pause() => _clock.Pause();
 
-    /// <summary>Tears down all sites and the clock. The instance is not reusable afterwards.</summary>
+    /// <summary>
+    /// Tears the simulation down; the instance is not reusable afterwards. The full
+    /// cascade (once the model tree is instantiated) is, in order:
+    /// stop every site thread, run each model's and service's <see cref="IDisposable.Dispose"/>
+    /// (their deinit) while nothing is executing, then dispose the SimSites and the
+    /// SimClock. This placeholder currently owns no models/services, so it disposes
+    /// only the sites and clock.
+    /// </summary>
     public void Dispose()
     {
+        // 1. stop site threads first so no model/service code runs during deinit
+        foreach (var site in _sites)
+            site.Stop();
+
+        // 2. (future) run models' and services' Dispose here — see SimulatorBase
+
+        // 3. release site and clock resources
         foreach (var site in _sites)
             site.Dispose();
         _sites.Clear();
