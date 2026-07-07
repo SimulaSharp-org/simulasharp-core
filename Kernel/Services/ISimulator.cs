@@ -1,34 +1,38 @@
+using SimulaSharp.Kernel.Logging;
+
 namespace SimulaSharp.Kernel.Services;
 
 /// <summary>
 /// The control endpoint for a whole simulation. A generated
-/// <c>&lt;SimName&gt;Simulator</c> implements this (over the shared machinery in a
-/// <c>SimulatorBase</c>): by the time an instance is handed out it has already
-/// constructed the SimSites and model tree, wired the references, filled the
-/// config values, and run each model's <c>Configure()</c> depth-first. The MMI or
-/// CLI then drives the run through this surface.
-/// <para>
-/// Single-use: there is no reset — <see cref="IDisposable.Dispose"/> tears the
-/// simulation down; create a new instance to start over.
-/// </para>
+/// <c>&lt;SimName&gt;Simulator</c> implements this (over <c>SimulatorBase</c>). The
+/// driver (MMI or CLI) walks the lifecycle: register any log sinks, then
+/// <see cref="Initialize"/> (build the topology), <see cref="Configure"/> (run each
+/// model's setup), then <see cref="Start"/>/<see cref="Stop"/>.
+/// <para>Single-use: there is no reset — <see cref="IDisposable.Dispose"/> tears it down.</para>
 /// </summary>
 public interface ISimulator : IDisposable
 {
-    /// <summary>
-    /// The simulation clock — used to read time (<see cref="IClock.SimNowUs"/>,
-    /// <see cref="IClock.MissionNowUs"/>, <see cref="IClock.Now"/>) and to observe
-    /// run lifecycle (<see cref="IClock.Started"/>/<see cref="IClock.Stopped"/>).
-    /// Drive the run through <see cref="Start"/>/<see cref="Pause"/> below, not the
-    /// clock's own controls.
-    /// </summary>
+    /// <summary>The simulation clock — read time and observe the run lifecycle.</summary>
     IClock Clock { get; }
 
-    /// <summary>True while the simulation is running (started and not paused).</summary>
+    /// <summary>True while the simulation is running (started and not stopped).</summary>
     bool IsRunning { get; }
 
-    /// <summary>Starts or resumes the simulation.</summary>
+    /// <summary>
+    /// Registers a log destination. May be called at any time, including while the
+    /// simulation is running; entries produced after registration fan out to it.
+    /// </summary>
+    void RegisterLogSink(ILogSink sink);
+
+    /// <summary>Builds the topology: constructs the SimSites and model tree, wires references, fills config.</summary>
+    void Initialize();
+
+    /// <summary>Runs every model's and service's <c>Configure()</c> depth-first. Call after <see cref="Initialize"/>.</summary>
+    void Configure();
+
+    /// <summary>Starts or resumes the run.</summary>
     void Start();
 
-    /// <summary>Pauses (freezes) the simulation; resume with <see cref="Start"/>.</summary>
-    void Pause();
+    /// <summary>Freezes the run; resume with <see cref="Start"/>.</summary>
+    void Stop();
 }
