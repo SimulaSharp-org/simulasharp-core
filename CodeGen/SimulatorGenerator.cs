@@ -38,14 +38,15 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             static (spc, pair) => Emit(spc, pair.Left.Yaml!, pair.Left.Path, pair.Right));
     }
 
-    /// <summary>An AdditionalFile is an assembly if it carries the <c>IsSimAssembly</c> metadata (the &lt;SimAssembly&gt; tag) or ends in <c>.simassembly.yaml</c>.</summary>
+    /// <summary>
+    /// An AdditionalFile is an assembly when it carries the <c>IsSimAssembly</c> metadata — which the
+    /// CodeGen targets set on every <c>&lt;SimAssembly&gt;</c> item. That tag is the single way to
+    /// register an assembly; the file may be named anything (the <c>.simassembly.yaml</c> suffix is
+    /// only a human convention).
+    /// </summary>
     private static bool IsSimAssembly(AdditionalText file, AnalyzerConfigOptionsProvider options)
-    {
-        if (options.GetOptions(file).TryGetValue("build_metadata.AdditionalFiles.IsSimAssembly", out var v)
-            && string.Equals(v, "true", StringComparison.OrdinalIgnoreCase))
-            return true;
-        return file.Path.EndsWith(".simassembly.yaml", StringComparison.OrdinalIgnoreCase);
-    }
+        => options.GetOptions(file).TryGetValue("build_metadata.AdditionalFiles.IsSimAssembly", out var v)
+           && string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
 
     private static void Emit(SourceProductionContext spc, string yaml, string path, Compilation compilation)
     {

@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
 using SimulaSharp.Kernel.Model;
 
@@ -21,12 +22,34 @@ internal sealed record GenResult(
     public IEnumerable<string> Ids => Diagnostics.Select(d => d.Id);
 }
 
-/// <summary>An in-memory <see cref="AdditionalText"/> for feeding a <c>.simassembly.yaml</c> to a generator.</summary>
+/// <summary>An in-memory <see cref="AdditionalText"/> for feeding an assembly file to a generator.</summary>
 internal sealed class InMemoryAdditionalText(string path, string content) : AdditionalText
 {
     public override string Path { get; } = path;
     public override SourceText GetText(CancellationToken cancellationToken = default) =>
         SourceText.From(content);
+}
+
+/// <summary>
+/// Reports <c>IsSimAssembly=true</c> for every additional file — the metadata the CodeGen targets set on a
+/// <c>&lt;SimAssembly&gt;</c> item, which is how <see cref="SimulatorGenerator"/> recognizes an assembly.
+/// </summary>
+internal sealed class SimAssemblyOptionsProvider : AnalyzerConfigOptionsProvider
+{
+    private sealed class Options : AnalyzerConfigOptions
+    {
+        public override bool TryGetValue(string key, out string value)
+        {
+            if (key == "build_metadata.AdditionalFiles.IsSimAssembly") { value = "true"; return true; }
+            value = null!;
+            return false;
+        }
+    }
+
+    private static readonly AnalyzerConfigOptions Instance = new Options();
+    public override AnalyzerConfigOptions GlobalOptions => Instance;
+    public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) => Instance;
+    public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) => Instance;
 }
 
 /// <summary>
@@ -65,7 +88,9 @@ internal static class GeneratorHarness
 
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
             [generator.AsSourceGenerator()],
-            additionalTexts: additional);
+            additionalTexts: additional,
+            parseOptions: null,
+            optionsProvider: new SimAssemblyOptionsProvider());
 
         driver = driver.RunGenerators(compilation);
         var run = driver.GetRunResult();
