@@ -1,3 +1,4 @@
+using SimulaSharp.Kernel.Knobs;
 using SimulaSharp.Kernel.Logging;
 using SimulaSharp.Kernel.Model;
 
@@ -21,6 +22,8 @@ public abstract class SimulatorBase : ISimulator
     private readonly List<SimSite> _sites = [];
     private readonly List<IModel> _models = [];
     private readonly List<IService> _services = [];
+    private readonly List<Knob> _knobs = [];
+    private readonly List<IKnobChannel> _knobChannels = [];
 
     private SimulatorState _state = SimulatorState.Initial;
 
@@ -39,10 +42,33 @@ public abstract class SimulatorBase : ISimulator
     /// <inheritdoc/>
     public bool IsRunning => _clock.IsRunning;
 
+    /// <inheritdoc/>
+    public IReadOnlyList<Knob> Knobs => _knobs;
+
     // ── Logging ─────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
     public void RegisterLogSink(ILogSink sink) => _router.Add(sink);
+
+    // ── Knobs ───────────────────────────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public void RegisterKnobChannel(IKnobChannel channel)
+    {
+        _knobChannels.Add(channel);
+        if (_state >= SimulatorState.Initialized) AttachChannel(channel);
+    }
+
+    /// <summary>Hands the channel the discovered knobs and subscribes it to each knob's changes.</summary>
+    private void AttachChannel(IKnobChannel channel)
+    {
+        channel.OnKnobsDiscovered(_knobs);
+        foreach (var k in _knobs)
+        {
+            var knob = k;
+            knob.Changed += () => channel.OnKnobChanged(knob);
+        }
+    }
 
     // ── Building blocks for the generated subclass ──────────────────────────────
 
@@ -56,6 +82,10 @@ public abstract class SimulatorBase : ISimulator
 
     /// <summary>Creates a component-scoped logger over this simulation's clock and sink fan-out.</summary>
     protected ILogger CreateLogger(string issuer) => new ComponentLogger(issuer, _clock, _router);
+
+    /// <summary>Collects a model's knobs (if any) into the simulation's cached list, stamped with its full path.</summary>
+    protected void CollectKnobsFrom(IModel model, string fullPath) =>
+        (model as IKnobProvider)?.CollectKnobs(fullPath, _knobs);
 
     /// <summary>Registers a constructed model so it is Configured and Disposed with the simulation.</summary>
     protected T Register<T>(T model) where T : IModel
@@ -86,6 +116,7 @@ public abstract class SimulatorBase : ISimulator
         if (_state >= SimulatorState.Initialized) return;
         OnInitialize();
         _state = SimulatorState.Initialized;
+        foreach (var channel in _knobChannels) AttachChannel(channel);
     }
 
     /// <inheritdoc/>

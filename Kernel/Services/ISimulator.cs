@@ -1,3 +1,4 @@
+using SimulaSharp.Kernel.Knobs;
 using SimulaSharp.Kernel.Logging;
 
 namespace SimulaSharp.Kernel.Services;
@@ -26,6 +27,15 @@ public interface ISimulator : IDisposable
     /// simulation is running; entries produced after registration fan out to it.
     /// </summary>
     void RegisterLogSink(ILogSink sink);
+
+    /// <summary>The discovered knobs across every model instance (populated by <see cref="Initialize"/>).</summary>
+    IReadOnlyList<Knob> Knobs { get; }
+
+    /// <summary>
+    /// Registers a knob channel (the MMI). It receives the discovered knobs and a push
+    /// on every value change. May be registered before or after <see cref="Initialize"/>.
+    /// </summary>
+    void RegisterKnobChannel(IKnobChannel channel);
 
     /// <summary>Builds the topology: constructs the SimSites and model tree, wires references, fills config.</summary>
     void Initialize();

@@ -126,6 +126,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         sb.Append("        var ").Append(v).Append(" = Register(new global::").Append(node.Type)
             .Append("(Clock, ").Append(siteVar).Append(", CreateLogger(").Append(Str(fullPath)).AppendLine(")));");
         EmitConfig(sb, v, node.Config);
+        sb.Append("        CollectKnobsFrom(").Append(v).Append(", ").Append(Str(fullPath)).AppendLine(");");
 
         // Containment: each entry is { <containerFieldName>: [children] }
         foreach (var entry in node.Models ?? [])
