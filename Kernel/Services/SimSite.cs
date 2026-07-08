@@ -114,6 +114,40 @@ public sealed class SimSite : IScheduler
     public int AddCoroutine(Func<IEnumerator<SimYield>> factory, long delayUs) =>
         _events.AddCoroutine(factory, _clock.SimNowUs + delayUs);
 
+    /// <summary>
+    /// Converts an absolute mission time (µs) into the absolute sim-time due the
+    /// <see cref="EventQueue"/> expects, using a single consistent clock snapshot so the
+    /// sim/mission pair can't tear across two separate reads. Returns -1 for a past instant.
+    /// </summary>
+    private long MissionDueUs(long missionTimeUs)
+    {
+        TimeSnapshot t = _clock.Now();
+        return missionTimeUs < t.MissionTimeUs
+            ? -1
+            : t.SimTimeUs + (missionTimeUs - t.MissionTimeUs);
+    }
+
+    /// <inheritdoc/>
+    public int AddEventAtMission(Action action, long missionTimeUs)
+    {
+        long dueUs = MissionDueUs(missionTimeUs);
+        return dueUs < 0 ? -1 : _events.AddEvent(action, dueUs);
+    }
+
+    /// <inheritdoc/>
+    public int AddPeriodicEventAtMission(Action action, long missionTimeUs, long periodUs)
+    {
+        long dueUs = MissionDueUs(missionTimeUs);
+        return dueUs < 0 ? -1 : _events.AddPeriodic(action, dueUs, periodUs);
+    }
+
+    /// <inheritdoc/>
+    public int AddCoroutineAtMission(Func<IEnumerator<SimYield>> factory, long missionTimeUs)
+    {
+        long dueUs = MissionDueUs(missionTimeUs);
+        return dueUs < 0 ? -1 : _events.AddCoroutine(factory, dueUs);
+    }
+
     /// <inheritdoc/>
     public void RemoveEvent(int id) => _events.RemoveEvent(id);
 

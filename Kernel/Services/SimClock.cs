@@ -44,6 +44,21 @@ public sealed class SimClock : IClock
     /// <summary>Released to wake the clock thread out of its paused wait.</summary>
     private readonly AutoResetEvent _resume = new(false);
 
+    /// <summary>
+    /// Horizon (µs) at which the clock auto-pauses, or -1 when disarmed. Written by the
+    /// arming caller (<see cref="PauseAtSimUs"/>/<see cref="RunFor"/>) and cleared by the
+    /// clock thread when it fires or by any <see cref="Pause"/>. A single naturally-aligned
+    /// 64-bit value read/written with <see cref="Volatile"/> — visibility only, no
+    /// read-modify-write, so no <see cref="Interlocked"/> is needed.
+    /// </summary>
+    private long _pauseAtUs = -1;
+
+    /// <summary>
+    /// Signalled on every <see cref="Pause"/> so a caller blocked in <see cref="RunFor"/>
+    /// wakes as soon as the run boundary (or any freeze) is reached.
+    /// </summary>
+    private readonly ManualResetEventSlim _paused = new(false);
+
     private Thread? _thread;
     private volatile bool _running;
     private volatile bool _disposed;
@@ -120,7 +135,33 @@ public sealed class SimClock : IClock
         _sw.Stop();
         Volatile.Write(ref _horizonUs, _baseUs);   // freeze the published horizon exactly
 
+        Volatile.Write(ref _pauseAtUs, -1);   // a freeze is never silently re-armed
+        _paused.Set();                        // release any RunFor waiter
         Stopped?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc/>
+    public void PauseAtSimUs(long simTimeUs)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        Volatile.Write(ref _pauseAtUs, simTimeUs);
+
+        // If the target already lies at/behind a running horizon, honor it now rather than
+        // waiting for a tick that has effectively passed.
+        if (simTimeUs >= 0 && _running && SimNowUs >= simTimeUs)
+            Pause();
+    }
+
+    /// <inheritdoc/>
+    public void RunFor(long durationUs)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        _paused.Reset();
+        long targetUs = SimNowUs + durationUs;   // "from now", captured against the current horizon
+        Start();                                 // ensure running first (no-op if already running)
+        PauseAtSimUs(targetUs);                  // arm after Start so an already-passed target pauses cleanly
+        _paused.Wait();                          // block until the auto-pause (or any Pause) fires
     }
 
     /// <summary>
@@ -137,7 +178,18 @@ public sealed class SimClock : IClock
                 continue;
             }
 
-            Volatile.Write(ref _horizonUs, _baseUs + SegmentUs());
+            long h = _baseUs + SegmentUs();
+            Volatile.Write(ref _horizonUs, h);
+
+            // Auto-pause boundary (RunFor/PauseAtSimUs): self-pause on the writer thread so
+            // the caller never races the horizon. Pause() disarms the target and parks us.
+            long target = Volatile.Read(ref _pauseAtUs);
+            if (target >= 0 && h >= target)
+            {
+                Pause();
+                continue;
+            }
+
             Thread.SpinWait(1);
         }
     }
@@ -151,9 +203,12 @@ public sealed class SimClock : IClock
         if (_disposed) return;
         _disposed = true;
         _running = false;
+        Volatile.Write(ref _pauseAtUs, -1);
+        _paused.Set();      // release a caller blocked in RunFor
         _resume.Set();      // unblock the thread if it is parked
         _thread?.Join();
         _thread = null;
         _resume.Dispose();
+        _paused.Dispose();
     }
 }

@@ -25,6 +25,28 @@ public interface IScheduler : IDisposable
     /// <returns>The event id, or -1 if the queue is full.</returns>
     int AddCoroutine(Func<IEnumerator<SimYield>> factory, long delayUs);
 
+    /// <summary>
+    /// Schedules a one-shot action at an absolute mission time (µs since the mission epoch,
+    /// i.e. against <see cref="IClock.MissionNowUs"/>) instead of a relative delay.
+    /// </summary>
+    /// <returns>The event id, or -1 if the instant is already in the past or the queue is full.</returns>
+    int AddEventAtMission(Action action, long missionTimeUs);
+
+    /// <summary>
+    /// Schedules a repeating action whose <em>first</em> firing is at the absolute mission time
+    /// <paramref name="missionTimeUs"/>, then every <paramref name="periodUs"/> µs thereafter
+    /// (the period stays a relative interval; only the first firing is mission-anchored).
+    /// </summary>
+    /// <returns>The event id, or -1 if the instant is in the past, the period is non-positive, or the queue is full.</returns>
+    int AddPeriodicEventAtMission(Action action, long missionTimeUs, long periodUs);
+
+    /// <summary>
+    /// Schedules a coroutine process first stepped at the absolute mission time
+    /// <paramref name="missionTimeUs"/>; subsequent steps follow the delays it yields.
+    /// </summary>
+    /// <returns>The event id, or -1 if the instant is already in the past or the queue is full.</returns>
+    int AddCoroutineAtMission(Func<IEnumerator<SimYield>> factory, long missionTimeUs);
+
     /// <summary>Cancels a pending event by id; no effect if it has already fired or the id is unknown.</summary>
     void RemoveEvent(int id);
 

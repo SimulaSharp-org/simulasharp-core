@@ -32,6 +32,24 @@ public interface IClock : IDisposable
     /// <summary>Freeze the horizon. Raises <see cref="Stopped"/>.</summary>
     void Pause();
 
+    /// <summary>
+    /// Arms an automatic <see cref="Pause"/> for when the horizon first reaches
+    /// <paramref name="simTimeUs"/>; pass a negative value to disarm. A manual
+    /// <see cref="Pause"/> also disarms it (so a user freeze is never silently re-armed).
+    /// Time still advances continuously at 1:1 up to the target — this is a stop boundary,
+    /// not a jump — so overshoot is bounded by the clock's spin granularity.
+    /// </summary>
+    void PauseAtSimUs(long simTimeUs);
+
+    /// <summary>
+    /// Runs for <paramref name="durationUs"/> µs of sim time from now, then pauses,
+    /// <em>blocking the caller</em> until that pause fires. If the clock is not already
+    /// running it is started; a non-positive duration pauses immediately. Because time
+    /// advances at real time, this call takes roughly <paramref name="durationUs"/> of
+    /// wall-clock time — it is a controlled real-time run, not a fast-forward.
+    /// </summary>
+    void RunFor(long durationUs);
+
     /// <summary>Raised when the clock starts or resumes.</summary>
     event EventHandler? Started;
 
