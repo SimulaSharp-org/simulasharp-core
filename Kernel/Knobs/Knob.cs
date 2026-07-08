@@ -62,6 +62,9 @@ public sealed class Knob
     /// <summary>Raised whenever the value changes (from either the model or a write).</summary>
     public event Action? Changed;
 
+    /// <summary>Fires a trigger knob (posts the wrapped method onto the model's site). No-op for value knobs.</summary>
+    public void Trigger() => Invoke?.Invoke();
+
     /// <summary>Reads the current value (boxed).</summary>
     public object? Read() => ReadBoxed?.Invoke();
 

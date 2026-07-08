@@ -21,6 +21,7 @@ public sealed class KnobGenerator : IIncrementalGenerator
 {
     private const string IModelFullName = "SimulaSharp.Kernel.Model.IModel";
     private const string KnobAttrBase = "SimulaSharp.Kernel.Attributes.KnobAttribute";
+    private const string TriggerAttr = "SimulaSharp.Kernel.Attributes.TriggerKnobAttribute";
     private const string K = "global::SimulaSharp.Kernel.Knobs";
     private const string Vol = "global::System.Threading.Volatile";
 
@@ -49,16 +50,29 @@ public sealed class KnobGenerator : IIncrementalGenerator
         if (first is null || first.GetSyntax() != ctx.Node) return null;
 
         var knobs = new List<(IPropertySymbol Prop, AttributeData Attr, string Kind)>();
+        var triggers = new List<(AttributeData Attr, string Name)>();
         foreach (var member in model.GetMembers())
         {
-            if (member is not IPropertySymbol { IsPartialDefinition: true } p) continue;
-            var attr = p.GetAttributes().FirstOrDefault(static a => IsKnobAttr(a.AttributeClass));
-            if (attr is null) continue;
-            string? kind = KindOf(attr.AttributeClass?.ToDisplayString());
-            if (kind is null) continue;   // trigger/unknown → skip (v1)
-            knobs.Add((p, attr, kind));
+            switch (member)
+            {
+                case IPropertySymbol { IsPartialDefinition: true } p:
+                {
+                    var attr = p.GetAttributes().FirstOrDefault(static a => IsKnobAttr(a.AttributeClass));
+                    string? kind = attr is null ? null : KindOf(attr.AttributeClass?.ToDisplayString());
+                    if (attr is not null && kind is not null) knobs.Add((p, attr, kind));
+                    break;
+                }
+                // Trigger knob: a parameterless void Handle_<Name>() method.
+                case IMethodSymbol { MethodKind: MethodKind.Ordinary, ReturnsVoid: true } m when m.Parameters.IsEmpty:
+                {
+                    var attr = m.GetAttributes().FirstOrDefault(static a => a.AttributeClass?.ToDisplayString() == TriggerAttr);
+                    if (attr is not null && m.Name.StartsWith("Handle_"))
+                        triggers.Add((attr, m.Name.Substring("Handle_".Length)));
+                    break;
+                }
+            }
         }
-        if (knobs.Count == 0) return null;
+        if (knobs.Count == 0 && triggers.Count == 0) return null;
 
         bool hasNs = !model.ContainingNamespace.IsGlobalNamespace;
         string? ns = hasNs ? model.ContainingNamespace.ToDisplayString() : null;
@@ -91,12 +105,21 @@ public sealed class KnobGenerator : IIncrementalGenerator
               .Append("Changed { add => ").Append(f).Append("Knob!.Changed += value; remove => ").Append(f).AppendLine("Knob!.Changed -= value; }");
         }
 
+        // Trigger wrappers: a public <Name>() that runs Handle_<Name>() and raises the "triggered" notification.
+        foreach (var (_, name) in triggers)
+        {
+            sb.Append("    private ").Append(K).Append(".Knob? __").Append(name).AppendLine("Knob;");
+            sb.Append("    public void ").Append(name).Append("() { Handle_").Append(name).Append("(); __").Append(name).AppendLine("Knob?.RaiseChanged(); }");
+        }
+
         // Discovery hook.
         sb.AppendLine();
         sb.Append("    void ").Append(K).AppendLine(".IKnobProvider.CollectKnobs(string prefix, global::System.Collections.Generic.ICollection<" + K + ".Knob> into)");
         sb.AppendLine("    {");
         foreach (var (p, attr, kind) in knobs)
             EmitKnob(sb, model.Name, p, attr, kind);
+        foreach (var (attr, name) in triggers)
+            EmitTrigger(sb, name, attr);
         sb.AppendLine("    }");
 
         sb.AppendLine("}");
@@ -132,6 +155,20 @@ public sealed class KnobGenerator : IIncrementalGenerator
               .Append(")v!); Scheduler.Post(() => ").Append(f).AppendLine("Knob!.RaiseChanged()); },");
         sb.AppendLine("        };");
         sb.Append("        into.Add(").Append(f).AppendLine("Knob);");
+    }
+
+    private static void EmitTrigger(StringBuilder sb, string name, AttributeData attr)
+    {
+        bool ro = Named(attr, "IsReadOnly") is bool b && b;
+        sb.Append("        __").Append(name).Append("Knob = new ").Append(K).AppendLine(".Knob");
+        sb.AppendLine("        {");
+        sb.Append("            Path = prefix + \".").Append(name).AppendLine("\",");
+        sb.Append("            Label = ").Append(Str(attr.ConstructorArguments.FirstOrDefault().Value as string ?? name)).AppendLine(",");
+        sb.Append("            Kind = ").Append(K).AppendLine(".KnobKind.Trigger,");
+        sb.Append("            IsReadOnly = ").Append(ro ? "true" : "false").AppendLine(",");
+        sb.Append("            Invoke = () => Scheduler.Post(() => ").Append(name).AppendLine("()),");
+        sb.AppendLine("        };");
+        sb.Append("        into.Add(__").Append(name).AppendLine("Knob);");
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────────
