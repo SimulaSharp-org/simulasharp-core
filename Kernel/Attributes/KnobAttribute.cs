@@ -27,7 +27,7 @@ public abstract class KnobAttribute(string label) : Attribute
 /// In ReadOnly mode, it's just a label.
 /// In Read/Write mode, it's a text input field that, depending on the <see cref="AllowNewLine"/> property, may appear as a text area.
 /// </remarks>
-[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field)]
+[AttributeUsage(AttributeTargets.Property)]
 public class TextKnobAttribute(string label) : KnobAttribute(label)
 {
     /// <summary>Whether an empty value is permitted (RW).</summary>
@@ -48,7 +48,7 @@ public class TextKnobAttribute(string label) : KnobAttribute(label)
 /// In ReadOnly mode, it's just a light indicator.
 /// In Read/Write mode, it's a proper checkbox that can be toggled by both the user and the model.
 /// </remarks>
-[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field)]
+[AttributeUsage(AttributeTargets.Property)]
 public class TickBoxKnobAttribute(string label) : KnobAttribute(label);
 
 /// <summary>
@@ -83,7 +83,7 @@ public enum NumberKnobType
 /// Decorates model members that represent integer values to be exposed as knobs in the UI.
 /// </summary>
 /// <param name="label">The knob label.</param>
-[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field)]
+[AttributeUsage(AttributeTargets.Property)]
 public class IntegerKnobAttribute(string label) : KnobAttribute(label)
 {
     /// <summary>How the knob is presented.</summary>
@@ -101,7 +101,7 @@ public class IntegerKnobAttribute(string label) : KnobAttribute(label)
 /// Supports options for input precision, range, and decimal formatting.
 /// </summary>
 /// <param name="label">The label for the knob.</param>
-[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field)]
+[AttributeUsage(AttributeTargets.Property)]
 public class FloatKnobAttribute(string label) : KnobAttribute(label)
 {
     /// <summary>How the knob is presented.</summary>
