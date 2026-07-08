@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <IsPackable>false</IsPackable>
+        <!-- A stand-in for a built simulator pack: a hand-written SimulatorBase subclass. -->
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Kernel\Kernel.csproj" />
+    </ItemGroup>
+
+</Project>
