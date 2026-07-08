@@ -41,9 +41,16 @@ public interface ISimulator : IDisposable
     /// <summary>
     /// The discovered plot-telemetry points across every model instance (populated by
     /// <see cref="Initialize"/>), keyed by full dotted instance path. Sample them in one
-    /// mission-time-stamped sweep via <see cref="SimulatorBase.SamplePlottables"/>.
+    /// mission-time-stamped sweep via <see cref="SamplePlottables"/>.
     /// </summary>
     IReadOnlyDictionary<string, Plottable> Plottables { get; }
+
+    /// <summary>
+    /// Samples every plottable in one sweep, stamped with a single mission time read once, so
+    /// all points share a consistent x-axis. The plot consumer (MMI) calls this at its own cadence.
+    /// </summary>
+    /// <returns>The mission time (µs) of the sweep and a path → value snapshot.</returns>
+    (long MissionTimeUs, IReadOnlyDictionary<string, double> Values) SamplePlottables();
 
     /// <summary>Builds the topology: constructs the SimSites and model tree, wires references, fills config.</summary>
     void Initialize();

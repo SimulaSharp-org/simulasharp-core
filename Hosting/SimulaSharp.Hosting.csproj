@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- Shared from the host's Default load context so ISimulator/Knob/Plottable/LogEntry
+             have one type identity across the plugin ALC boundary. -->
+        <ProjectReference Include="..\Kernel\Kernel.csproj" />
+    </ItemGroup>
+
+</Project>
