@@ -44,6 +44,9 @@ public sealed class EventQueue
 
         /// <summary>Repeat interval (µs) for a periodic action; 0 for one-shot.</summary>
         public long PeriodUs;
+
+        /// <summary>Bumped when the slot is freed; guards a stale <see cref="ReArm"/> against a reused slot.</summary>
+        public int Version;
     }
 
     private readonly Slot[] _slots;
@@ -57,6 +60,13 @@ public sealed class EventQueue
     /// <em>next</em> pass, not this one, so a tight coroutine can't starve the loop.
     /// </summary>
     private readonly List<int> _dueBatch;
+
+    /// <summary>
+    /// Invoked when a coroutine yields <see cref="SimYield.Await"/>, with (slot, version, task).
+    /// The owner (SimSite) must arrange to call <see cref="ReArm"/> on its own thread once the
+    /// task completes; set it before running awaiting coroutines.
+    /// </summary>
+    public Action<int, int, Task>? OnAwait;
 
     /// <summary>Creates a queue that can hold at most <paramref name="maxCapacity"/> pending entries.</summary>
     public EventQueue(int maxCapacity)
@@ -181,9 +191,18 @@ public sealed class EventQueue
             {
                 if (s.Coroutine.MoveNext())
                 {
-                    // Re-schedule for the yielded delay (0 => next pass).
-                    s.DueTimeUs += s.Coroutine.Current.DelayUs;
-                    _pq.Enqueue(slot, s.DueTimeUs);
+                    var y = s.Coroutine.Current;
+                    if (y.Awaited is { } awaited)
+                    {
+                        // Park: keep the slot, don't time-schedule; resume via ReArm when the task completes.
+                        OnAwait?.Invoke(slot, s.Version, awaited);
+                    }
+                    else
+                    {
+                        // Re-schedule for the yielded delay (0 => next pass).
+                        s.DueTimeUs += y.DelayUs;
+                        _pq.Enqueue(slot, s.DueTimeUs);
+                    }
                 }
                 else
                 {
@@ -221,6 +240,20 @@ public sealed class EventQueue
         }
     }
 
+    /// <summary>
+    /// Re-arms a coroutine parked by <see cref="SimYield.Await"/> so it resumes at
+    /// <paramref name="nowUs"/>. Must be called on the owning site's thread (via its inbox).
+    /// No-ops if the slot was freed/reused since parking (guarded by <paramref name="version"/>).
+    /// </summary>
+    public void ReArm(int slot, int version, long nowUs)
+    {
+        if (slot < 0 || slot >= _slots.Length) return;
+        ref Slot s = ref _slots[slot];
+        if (s.Coroutine is null || s.Version != version) return;
+        s.DueTimeUs = nowUs;
+        _pq.Enqueue(slot, nowUs);
+    }
+
     /// <summary>Clears a slot and returns it to the free-list for reuse.</summary>
     private void FreeSlot(int slot)
     {
@@ -230,6 +263,7 @@ public sealed class EventQueue
         s.Factory = null;
         s.PeriodUs = 0;
         s.DueTimeUs = -1;
+        s.Version++;
         _freeSlots.Enqueue(slot);
     }
 }

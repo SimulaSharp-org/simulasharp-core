@@ -51,6 +51,15 @@ public sealed class SimSite : IScheduler
         _name = name;
         _clock = clock;
         _events = new EventQueue(maxEvents);
+
+        // When a coroutine awaits a task, resume it (on this thread, via the inbox) once
+        // the task completes — re-arming at the then-current time so later delays are correct.
+        _events.OnAwait = (slot, version, task) =>
+            task.ContinueWith(
+                _ => Post(() => _events.ReArm(slot, version, _clock.SimNowUs)),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
     }
 
     /// <summary>
