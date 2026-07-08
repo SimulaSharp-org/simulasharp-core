@@ -1,5 +1,6 @@
 using SimulaSharp.Kernel.Knobs;
 using SimulaSharp.Kernel.Logging;
+using SimulaSharp.Kernel.Plotting;
 
 namespace SimulaSharp.Kernel.Services;
 
@@ -36,6 +37,13 @@ public interface ISimulator : IDisposable
     /// on every value change. May be registered before or after <see cref="Initialize"/>.
     /// </summary>
     void RegisterKnobChannel(IKnobChannel channel);
+
+    /// <summary>
+    /// The discovered plot-telemetry points across every model instance (populated by
+    /// <see cref="Initialize"/>), keyed by full dotted instance path. Sample them in one
+    /// mission-time-stamped sweep via <see cref="SimulatorBase.SamplePlottables"/>.
+    /// </summary>
+    IReadOnlyDictionary<string, Plottable> Plottables { get; }
 
     /// <summary>Builds the topology: constructs the SimSites and model tree, wires references, fills config.</summary>
     void Initialize();

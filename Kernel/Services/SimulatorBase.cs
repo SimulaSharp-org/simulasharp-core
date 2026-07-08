@@ -1,6 +1,7 @@
 using SimulaSharp.Kernel.Knobs;
 using SimulaSharp.Kernel.Logging;
 using SimulaSharp.Kernel.Model;
+using SimulaSharp.Kernel.Plotting;
 
 namespace SimulaSharp.Kernel.Services;
 
@@ -24,6 +25,7 @@ public abstract class SimulatorBase : ISimulator
     private readonly List<IService> _services = [];
     private readonly List<Knob> _knobs = [];
     private readonly List<IKnobChannel> _knobChannels = [];
+    private readonly Dictionary<string, Plottable> _plottables = [];
 
     private SimulatorState _state = SimulatorState.Initial;
 
@@ -44,6 +46,9 @@ public abstract class SimulatorBase : ISimulator
 
     /// <inheritdoc/>
     public IReadOnlyList<Knob> Knobs => _knobs;
+
+    /// <inheritdoc/>
+    public IReadOnlyDictionary<string, Plottable> Plottables => _plottables;
 
     // ── Logging ─────────────────────────────────────────────────────────────────
 
@@ -86,6 +91,24 @@ public abstract class SimulatorBase : ISimulator
     /// <summary>Collects a model's knobs (if any) into the simulation's cached list, stamped with its full path.</summary>
     protected void CollectKnobsFrom(IModel model, string fullPath) =>
         (model as IKnobProvider)?.CollectKnobs(fullPath, _knobs);
+
+    /// <summary>Collects a model's plottables (if any) into the simulation's map, keyed by full path.</summary>
+    protected void CollectPlottablesFrom(IModel model, string fullPath) =>
+        (model as IPlottableProvider)?.CollectPlottables(fullPath, _plottables);
+
+    /// <summary>
+    /// Samples every plottable in one sweep, stamped with a single mission time
+    /// (<see cref="IClock.MissionNowUs"/>) read once — so all points in the returned frame
+    /// share a consistent x-axis. The plot consumer (MMI) calls this at its own cadence.
+    /// </summary>
+    /// <returns>The mission time (µs) of the sweep and a path → value snapshot.</returns>
+    public (long MissionTimeUs, IReadOnlyDictionary<string, double> Values) SamplePlottables()
+    {
+        long missionTimeUs = _clock.MissionNowUs;
+        var values = new Dictionary<string, double>(_plottables.Count);
+        foreach (var kv in _plottables) values[kv.Key] = kv.Value.Sample();
+        return (missionTimeUs, values);
+    }
 
     /// <summary>Registers a constructed model so it is Configured and Disposed with the simulation.</summary>
     protected T Register<T>(T model) where T : IModel
