@@ -17,6 +17,11 @@
         <PackageReference Include="YamlDotNet" Version="13.7.1" GeneratePathProperty="true" PrivateAssets="all" />
     </ItemGroup>
 
+    <!-- Ship the <SimAssembly> item support so consumers auto-import it from the package. -->
+    <ItemGroup>
+        <None Include="build\SimulaSharp.CodeGen.targets" Pack="true" PackagePath="build\" />
+    </ItemGroup>
+
     <!-- Bundle YamlDotNet.dll alongside the analyzer so it loads in the compiler process. -->
     <PropertyGroup>
         <GetTargetPathDependsOn>$(GetTargetPathDependsOn);GetDependencyTargetPaths</GetTargetPathDependsOn>

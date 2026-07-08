@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
 using YamlDotNet.Serialization;
 
@@ -28,12 +29,22 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var assemblies = context.AdditionalTextsProvider
-            .Where(static f => f.Path.EndsWith(".simassembly.yaml", StringComparison.OrdinalIgnoreCase))
-            .Select(static (f, ct) => f.GetText(ct)?.ToString())
+            .Combine(context.AnalyzerConfigOptionsProvider)
+            .Where(static p => IsSimAssembly(p.Left, p.Right))
+            .Select(static (p, ct) => p.Left.GetText(ct)?.ToString())
             .Where(static t => !string.IsNullOrWhiteSpace(t))
             .Select(static (t, _) => t!);
 
         context.RegisterSourceOutput(assemblies, static (spc, yaml) => Emit(spc, yaml));
+    }
+
+    /// <summary>An AdditionalFile is an assembly if it carries the <c>IsSimAssembly</c> metadata (the &lt;SimAssembly&gt; tag) or ends in <c>.simassembly.yaml</c>.</summary>
+    private static bool IsSimAssembly(AdditionalText file, AnalyzerConfigOptionsProvider options)
+    {
+        if (options.GetOptions(file).TryGetValue("build_metadata.AdditionalFiles.IsSimAssembly", out var v)
+            && string.Equals(v, "true", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return file.Path.EndsWith(".simassembly.yaml", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void Emit(SourceProductionContext spc, string yaml)

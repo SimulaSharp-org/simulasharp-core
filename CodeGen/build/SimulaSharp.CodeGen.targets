@@ -1,0 +1,20 @@
+<Project>
+
+    <!--
+      Makes <SimAssembly Include="x.yaml"/> a first-class, IDE-recognized build action
+      (like Antlr4's item), and bridges it to what the Roslyn generator can actually see:
+      an AdditionalFiles item tagged IsSimAssembly, with that metadata made compiler-visible.
+      Auto-imported when consumed as a NuGet package (build/<PackageId>.targets); for a
+      ProjectReference, import this file explicitly.
+    -->
+
+    <ItemGroup>
+        <AvailableItemName Include="SimAssembly" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <AdditionalFiles Include="@(SimAssembly)" IsSimAssembly="true" />
+        <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="IsSimAssembly" />
+    </ItemGroup>
+
+</Project>
