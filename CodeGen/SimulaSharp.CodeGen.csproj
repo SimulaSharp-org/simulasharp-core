@@ -10,6 +10,8 @@
         <IncludeBuildOutput>false</IncludeBuildOutput>
         <AssemblyName>SimulaSharp.CodeGen</AssemblyName>
         <RootNamespace>SimulaSharp.CodeGen</RootNamespace>
+        <!-- RS2008: analyzer-release-tracking for the SIMxxx diagnostics; not packaging release notes. -->
+        <NoWarn>$(NoWarn);RS2008</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>
