@@ -14,6 +14,17 @@
 
     <ItemGroup>
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+        <PackageReference Include="YamlDotNet" Version="13.7.1" GeneratePathProperty="true" PrivateAssets="all" />
     </ItemGroup>
+
+    <!-- Bundle YamlDotNet.dll alongside the analyzer so it loads in the compiler process. -->
+    <PropertyGroup>
+        <GetTargetPathDependsOn>$(GetTargetPathDependsOn);GetDependencyTargetPaths</GetTargetPathDependsOn>
+    </PropertyGroup>
+    <Target Name="GetDependencyTargetPaths">
+        <ItemGroup>
+            <TargetPathWithTargetPlatformMoniker Include="$(PkgYamlDotNet)\lib\netstandard2.0\YamlDotNet.dll" IncludeRuntimeDependency="false" />
+        </ItemGroup>
+    </Target>
 
 </Project>
