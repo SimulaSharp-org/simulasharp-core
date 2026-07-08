@@ -94,8 +94,6 @@ public sealed class ServiceGenerator : IIncrementalGenerator
             if (args.Length == 0 || args[0].Value is not string name) continue;
 
             var argType = args.Length > 1 ? args[1].Value as ITypeSymbol : null;
-            var resultType = args.Length > 2 ? args[2].Value as ITypeSymbol : null;
-            if (resultType is not null) continue;   // returning events not generated yet
 
             sb.AppendLine();
             if (argType is null)

@@ -17,20 +17,17 @@ namespace SimulaSharp.Kernel.Attributes;
 /// A payload-less event (<see cref="ArgType"/> null) generates the argument-free forms.
 /// </para>
 /// <para>
-/// When a <see cref="ResultType"/> is given the callback returns a value: the
-/// registered callback becomes a <c>Func&lt;arg, result&gt;</c> and <c>Trigger_</c>
-/// surfaces that result back to the service (marshalled from the subscriber's site).
+/// Events are always <b>fire-and-forget</b> — they carry no result. A result would
+/// force synchronous cross-thread execution, which the design does not support; if a
+/// model needs to send something back, it posts to a separate <c>[ServiceRequest]</c>.
 /// </para>
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
-public sealed class ServiceEventAttribute(string name, Type? argType = null, Type? resultType = null) : Attribute
+public sealed class ServiceEventAttribute(string name, Type? argType = null) : Attribute
 {
     /// <summary>The event name; used to name the generated <c>Trigger_</c>/<c>Register_</c> members.</summary>
     public string Name { get; } = name;
 
     /// <summary>The single payload type, or null for a payload-less event.</summary>
     public Type? ArgType { get; } = argType;
-
-    /// <summary>The result type the subscriber returns, or null for a fire-and-forget event.</summary>
-    public Type? ResultType { get; } = resultType;
 }
