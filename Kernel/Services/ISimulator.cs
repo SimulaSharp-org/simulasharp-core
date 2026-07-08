@@ -15,6 +15,9 @@ public interface ISimulator : IDisposable
     /// <summary>The simulation clock — read time and observe the run lifecycle.</summary>
     IClock Clock { get; }
 
+    /// <summary>The current lifecycle state (Initial → Initialized → Configured → Running).</summary>
+    SimulatorState State { get; }
+
     /// <summary>True while the simulation is running (started and not stopped).</summary>
     bool IsRunning { get; }
 

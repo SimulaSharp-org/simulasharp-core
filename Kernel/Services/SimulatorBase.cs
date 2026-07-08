@@ -17,28 +17,24 @@ namespace SimulaSharp.Kernel.Services;
 public abstract class SimulatorBase : ISimulator
 {
     private readonly SimClock _clock;
-    private readonly ILogSink _fanOut;
+    private readonly LogRouter _router = new();
     private readonly List<SimSite> _sites = [];
     private readonly List<IModel> _models = [];
     private readonly List<IService> _services = [];
 
-    // Copy-on-write sink list: lock-free fan-out reads, locked registration writes.
-    private readonly object _sinkLock = new();
-    private volatile ILogSink[] _sinks = [];
-
-    private bool _initialized;
-    private bool _configured;
-    private bool _started;
+    private SimulatorState _state = SimulatorState.Initial;
 
     /// <param name="missionStart">Absolute wall-clock time mapped to simulation time 0.</param>
     protected SimulatorBase(DateTime missionStart)
     {
         _clock = new SimClock(missionStart);
-        _fanOut = new FanOutSink(this);
     }
 
     /// <inheritdoc/>
     public IClock Clock => _clock;
+
+    /// <inheritdoc/>
+    public SimulatorState State => _state;
 
     /// <inheritdoc/>
     public bool IsRunning => _clock.IsRunning;
@@ -46,31 +42,7 @@ public abstract class SimulatorBase : ISimulator
     // ── Logging ─────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
-    public void RegisterLogSink(ILogSink sink)
-    {
-        ArgumentNullException.ThrowIfNull(sink);
-        lock (_sinkLock)
-        {
-            var updated = new ILogSink[_sinks.Length + 1];
-            Array.Copy(_sinks, updated, _sinks.Length);
-            updated[_sinks.Length] = sink;
-            _sinks = updated;   // volatile publish
-        }
-    }
-
-    /// <summary>Fans one entry out to every currently-registered sink.</summary>
-    private void Fan(in LogEntry entry)
-    {
-        var sinks = _sinks;   // volatile snapshot
-        for (int i = 0; i < sinks.Length; i++)
-            sinks[i].Submit(entry);
-    }
-
-    /// <summary>The sink handed to component loggers; forwards to <see cref="Fan"/>.</summary>
-    private sealed class FanOutSink(SimulatorBase owner) : ILogSink
-    {
-        public void Submit(in LogEntry entry) => owner.Fan(entry);
-    }
+    public void RegisterLogSink(ILogSink sink) => _router.Add(sink);
 
     // ── Building blocks for the generated subclass ──────────────────────────────
 
@@ -83,7 +55,7 @@ public abstract class SimulatorBase : ISimulator
     }
 
     /// <summary>Creates a component-scoped logger over this simulation's clock and sink fan-out.</summary>
-    protected ILogger CreateLogger(string issuer) => new ComponentLogger(issuer, _clock, _fanOut);
+    protected ILogger CreateLogger(string issuer) => new ComponentLogger(issuer, _clock, _router);
 
     /// <summary>Registers a constructed model so it is Configured and Disposed with the simulation.</summary>
     protected T Register<T>(T model) where T : IModel
@@ -111,29 +83,29 @@ public abstract class SimulatorBase : ISimulator
     /// <inheritdoc/>
     public void Initialize()
     {
-        if (_initialized) return;
+        if (_state >= SimulatorState.Initialized) return;
         OnInitialize();
-        _initialized = true;
+        _state = SimulatorState.Initialized;
     }
 
     /// <inheritdoc/>
     public void Configure()
     {
-        if (!_initialized) throw new InvalidOperationException("Initialize() must run before Configure().");
-        if (_configured) return;
+        if (_state < SimulatorState.Initialized) throw new InvalidOperationException("Initialize() must run before Configure().");
+        if (_state >= SimulatorState.Configured) return;
         foreach (var service in _services) service.Configure();
         foreach (var model in _models) model.Configure();
-        _configured = true;
+        _state = SimulatorState.Configured;
     }
 
     /// <inheritdoc/>
     public void Start()
     {
-        if (!_configured) throw new InvalidOperationException("Configure() must run before Start().");
-        if (!_started)
+        if (_state < SimulatorState.Configured) throw new InvalidOperationException("Configure() must run before Start().");
+        if (_state < SimulatorState.Running)
         {
             foreach (var site in _sites) site.Start();
-            _started = true;
+            _state = SimulatorState.Running;
         }
         _clock.Start();
     }
