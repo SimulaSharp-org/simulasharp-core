@@ -11,7 +11,7 @@ namespace SimulaSharp.CodeGen;
 
 /// <summary>
 /// For every partial model with knob-decorated partial properties, implements them
-/// (volatile get; volatile set + change-notify) and builds a <see cref="Knob"/> binder
+/// (volatile get; volatile set + change-notify) and builds a <c>Knob</c> binder
 /// per knob via an explicit <c>IKnobProvider.CollectKnobs</c> the simulator calls during
 /// discovery. v1 covers value knobs (Text/TickBox/Integer/Float); trigger knobs are
 /// deferred.

@@ -7,6 +7,9 @@
         <Nullable>enable</Nullable>
         <AssemblyName>SimulaSharp.Kernel</AssemblyName>
         <RootNamespace>SimulaSharp.Kernel</RootNamespace>
+        <!-- Emit XML docs so the docs site's API reference can harvest them. -->
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <NoWarn>$(NoWarn);1591</NoWarn>
     </PropertyGroup>
 
 </Project>

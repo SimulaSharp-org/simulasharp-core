@@ -10,7 +10,7 @@ namespace SimulaSharp.CodeGen;
 
 /// <summary>
 /// For every partial model with <c>[Plottable]</c> properties, implements
-/// <c>IPlottableProvider.CollectPlottables</c> — building a <see cref="P:…Plottable"/>
+/// <c>IPlottableProvider.CollectPlottables</c> — building a <c>Plottable</c>
 /// binder per member whose <c>Sample</c> delegate does a volatile read (through the
 /// member's volatile getter) projected to <c>double</c>.
 /// <para>

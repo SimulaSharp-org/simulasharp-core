@@ -10,8 +10,11 @@
         <IncludeBuildOutput>false</IncludeBuildOutput>
         <AssemblyName>SimulaSharp.CodeGen</AssemblyName>
         <RootNamespace>SimulaSharp.CodeGen</RootNamespace>
-        <!-- RS2008: analyzer-release-tracking for the SIMxxx diagnostics; not packaging release notes. -->
-        <NoWarn>$(NoWarn);RS2008</NoWarn>
+        <!-- RS2008: analyzer-release-tracking for the SIMxxx diagnostics; not packaging release notes.
+             1591: allow not-yet-documented public members (the docs API reference harvests these XML docs). -->
+        <NoWarn>$(NoWarn);RS2008;1591</NoWarn>
+        <!-- Emit XML docs so the docs site's API reference can harvest them. -->
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
 
     <ItemGroup>
