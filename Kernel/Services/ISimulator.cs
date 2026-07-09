@@ -63,4 +63,11 @@ public interface ISimulator : IDisposable
 
     /// <summary>Freezes the run; resume with <see cref="Start"/>.</summary>
     void Stop();
+
+    /// <summary>
+    /// Runs for <paramref name="durationUs"/> µs of sim time from now, then freezes — blocking the
+    /// caller until it does. A bounded real-time run (time still advances at 1:1), for scripted runs
+    /// and tests, so a host doesn't need the concrete clock. Requires <see cref="Start"/>-ability.
+    /// </summary>
+    void RunFor(long durationUs);
 }

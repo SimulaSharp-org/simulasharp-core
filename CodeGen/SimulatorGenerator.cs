@@ -83,12 +83,16 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         var ctx = new EmitCtx();
         var init = new StringBuilder();
 
-        // 1. Services
+        // 1. Services. A clock-ungated (loosely-coupled) service registers through a different
+        //    entry point — routed here by walking the concrete type's base chain.
+        var looselyCoupledBase = compilation.GetTypeByMetadataName("SimulaSharp.Kernel.Model.LooselyCoupledServiceBase");
         foreach (var svc in sim.Services ?? [])
         {
             string v = ctx.NextVar();
             ctx.Services[svc.Name] = v;
-            init.Append("        var ").Append(v).Append(" = RegisterService(new global::").Append(svc.Type)
+            string register = DerivesFrom(compilation.GetTypeByMetadataName(svc.Type), looselyCoupledBase)
+                ? "RegisterLooselyCoupledService" : "RegisterService";
+            init.Append("        var ").Append(v).Append(" = ").Append(register).Append("(new global::").Append(svc.Type)
                 .Append("(Clock, CreateLogger(").Append(Str(name + "." + svc.Name)).AppendLine(")));");
             EmitConfig(init, v, svc.Config);
         }
@@ -188,6 +192,15 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                 DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt))
             return $"new global::System.DateTime({dt.Ticks}L, global::System.DateTimeKind.Utc)";
         return "global::System.DateTime.UnixEpoch";
+    }
+
+    /// <summary>True if <paramref name="type"/> (or an ancestor) is <paramref name="baseType"/>. False if either is null.</summary>
+    private static bool DerivesFrom(INamedTypeSymbol? type, INamedTypeSymbol? baseType)
+    {
+        if (baseType is null) return false;
+        for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
+            if (SymbolEqualityComparer.Default.Equals(t, baseType)) return true;
+        return false;
     }
 
     private static string Str(string? s) =>

@@ -12,4 +12,10 @@
         <NoWarn>$(NoWarn);1591</NoWarn>
     </PropertyGroup>
 
+    <ItemGroup>
+        <!-- The test suite drives internals (e.g. LooselyCoupledSite.DrainInbox, normally only
+             called by LooselyCoupledServiceBase) directly, to test each site in isolation. -->
+        <InternalsVisibleTo Include="Kernel.Tests" />
+    </ItemGroup>
+
 </Project>

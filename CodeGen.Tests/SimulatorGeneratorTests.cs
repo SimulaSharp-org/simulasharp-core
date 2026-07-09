@@ -77,6 +77,36 @@ public sealed class SimulatorGeneratorTests
     }
 
     [Test]
+    public void A_loosely_coupled_service_routes_to_RegisterLooselyCoupledService()
+    {
+        // A service whose type derives LooselyCoupledServiceBase must register through the
+        // clock-ungated entry point, not the sim-paced RegisterService.
+        const string world = World + """
+
+            public sealed class Egse : LooselyCoupledServiceBase
+            {
+                public Egse(IClock c, ILogger l) : base(c, l, "Egse") { }
+                protected override System.Threading.Tasks.Task _EntryPoint() => System.Threading.Tasks.Task.CompletedTask;
+            }
+            """;
+        var r = Run("""
+            Simulator:
+              Name: Widget
+              Services:
+                - Name: Link
+                  Type: Demo.Egse
+              Sites: []
+            """, world);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Diagnostics, Is.Empty, "loosely-coupled service reported: " + string.Join(",", r.Ids));
+            Assert.That(r.AllSource, Does.Contain("RegisterLooselyCoupledService(new global::Demo.Egse("));
+            Assert.That(r.AllSource, Does.Not.Contain("RegisterService(new global::Demo.Egse("));
+        });
+    }
+
+    [Test]
     public void SIM001_reports_a_parse_error()
     {
         var r = Run("Simulator: : : [unclosed");

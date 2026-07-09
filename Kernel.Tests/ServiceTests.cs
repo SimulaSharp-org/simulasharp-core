@@ -50,7 +50,7 @@ public sealed class ServiceBaseTests
     private static readonly DateTime Epoch = new(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
     [Test]
-    public void A_service_exposes_its_own_scheduler_and_the_injected_dependencies()
+    public void A_service_exposes_its_own_site_and_the_injected_dependencies()
     {
         using var clock = new SimClock(Epoch);
         var logger = new ComponentLogger("Sim.Svc", clock, new CapturingSink());
@@ -60,7 +60,7 @@ public sealed class ServiceBaseTests
         {
             Assert.That(svc.TimeKeeper, Is.SameAs(clock));
             Assert.That(svc.Logger, Is.SameAs(logger));
-            Assert.That(svc.Scheduler, Is.Not.Null, "a service must own a SimSite scheduler");
+            Assert.That(svc.Site, Is.Not.Null, "a service must own a site (its marshalling + lifecycle surface)");
         });
     }
 

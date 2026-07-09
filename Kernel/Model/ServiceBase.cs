@@ -36,10 +36,14 @@ public abstract class ServiceBase : IService
     public ILogger Logger { get; }
 
     /// <inheritdoc/>
-    public IScheduler Scheduler => _site;
+    public IDispatcherSite Site => _site;
 
-    /// <summary>The service's own SimSite. Framework access: the simulator starts/stops/disposes it.</summary>
-    internal SimSite Site => _site;
+    /// <summary>
+    /// The service's own sim-paced scheduler — use it to register long-running sim-time work in
+    /// <see cref="Configure"/>. (The public <see cref="Site"/> is the same site; this is the
+    /// sim-time facet, available only to a <see cref="ServiceBase"/>, not to callers.)
+    /// </summary>
+    protected IScheduler Scheduler => _site;
 
     /// <summary>
     /// Called by the framework after construction, assembly and config are complete.

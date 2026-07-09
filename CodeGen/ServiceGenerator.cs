@@ -13,12 +13,15 @@ namespace SimulaSharp.CodeGen;
 /// <list type="bullet">
 ///   <item>For each <c>[ServiceEvent("X", argType?)]</c> — a fire-and-forget publish
 ///   point — a backing <c>ServiceEventChannel</c>, a public
-///   <c>RegisterCallback_X(scheduler, callback)</c> for subscribers, and a protected
-///   <c>Trigger_X(...)</c> the service calls to publish (Posts each callback onto its
-///   subscriber's site). Returning events (a result type) are not yet generated.</item>
+///   <c>RegisterCallback_X(dispatcher, callback)</c> for subscribers (the subscriber
+///   passes its site's <c>IDispatcher</c>), and a protected <c>Trigger_X(...)</c> the
+///   service calls to publish (Posts each callback onto its subscriber's dispatcher).
+///   Returning events (a result type) are not yet generated.</item>
 ///   <item>For each <c>[ServiceRequest]</c> method <c>Handle_X(..)</c> — a public
-///   <c>X(..)</c> caller that marshals the call onto the service's own site and returns
-///   an awaitable (<c>Task</c>/<c>Task&lt;T&gt;</c>).</item>
+///   <c>X(..)</c> caller that marshals the call onto the service's own site
+///   (<c>Site.Inject*</c>, the common <c>IDispatcher</c> facet, so it works on both the
+///   sim-paced and loosely-coupled service bases) and returns an awaitable
+///   (<c>Task</c>/<c>Task&lt;T&gt;</c>).</item>
 /// </list>
 /// </summary>
 [Generator]
@@ -28,7 +31,7 @@ public sealed class ServiceGenerator : IIncrementalGenerator
     private const string ServiceEventAttr = "SimulaSharp.Kernel.Attributes.ServiceEventAttribute";
     private const string ServiceRequestAttr = "SimulaSharp.Kernel.Attributes.ServiceRequestAttribute";
 
-    private const string Sched = "global::SimulaSharp.Kernel.Services.IScheduler";
+    private const string Sched = "global::SimulaSharp.Kernel.Services.IDispatcher";
     private const string Chan = "global::SimulaSharp.Kernel.Services.ServiceEventChannel";
     private const string Task = "global::System.Threading.Tasks.Task";
     private const string Act = "global::System.Action";
@@ -100,7 +103,7 @@ public sealed class ServiceGenerator : IIncrementalGenerator
             {
                 sb.Append("    private readonly ").Append(Chan).Append(" __evt_").Append(name).AppendLine(" = new();");
                 sb.Append("    public void RegisterCallback_").Append(name).Append('(').Append(Sched)
-                  .Append(" scheduler, ").Append(Act).Append(" callback) => __evt_").Append(name).AppendLine(".Register(scheduler, callback);");
+                  .Append(" dispatcher, ").Append(Act).Append(" callback) => __evt_").Append(name).AppendLine(".Register(dispatcher, callback);");
                 sb.Append("    protected void Trigger_").Append(name).Append("() => __evt_").Append(name).AppendLine(".Trigger();");
             }
             else
@@ -108,7 +111,7 @@ public sealed class ServiceGenerator : IIncrementalGenerator
                 string t = argType.ToDisplayString(Fq);
                 sb.Append("    private readonly ").Append(Chan).Append('<').Append(t).Append("> __evt_").Append(name).AppendLine(" = new();");
                 sb.Append("    public void RegisterCallback_").Append(name).Append('(').Append(Sched)
-                  .Append(" scheduler, ").Append(Act).Append('<').Append(t).Append("> callback) => __evt_").Append(name).AppendLine(".Register(scheduler, callback);");
+                  .Append(" dispatcher, ").Append(Act).Append('<').Append(t).Append("> callback) => __evt_").Append(name).AppendLine(".Register(dispatcher, callback);");
                 sb.Append("    protected void Trigger_").Append(name).Append('(').Append(t).Append(" value) => __evt_").Append(name).AppendLine(".Trigger(value);");
             }
         }
@@ -135,13 +138,13 @@ public sealed class ServiceGenerator : IIncrementalGenerator
             if (m.ReturnsVoid)
             {
                 sb.Append("    public ").Append(Task).Append(' ').Append(requestName).Append('(').Append(decls)
-                  .Append(") => Scheduler.InjectVoidAsync(() => ").Append(invoke).AppendLine(");");
+                  .Append(") => Site.InjectVoidAsync(() => ").Append(invoke).AppendLine(");");
             }
             else
             {
                 sb.Append("    public ").Append(Task).Append('<').Append(m.ReturnType.ToDisplayString(Fq)).Append("> ")
                   .Append(requestName).Append('(').Append(decls)
-                  .Append(") => Scheduler.InjectAsync(() => ").Append(invoke).AppendLine(");");
+                  .Append(") => Site.InjectAsync(() => ").Append(invoke).AppendLine(");");
             }
         }
     }

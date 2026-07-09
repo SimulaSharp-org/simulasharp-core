@@ -9,7 +9,7 @@ namespace SimulaSharp.Kernel.Services;
 /// A single background thread (the sole writer) continuously advances the
 /// <em>horizon</em> — elapsed simulation time in microseconds — and publishes it
 /// to a plain <see cref="long"/> field. Observers (SimSites) read that field with
-/// <see cref="Volatile.Read(ref long)"/>. Because there is exactly one writer and
+/// <c>Volatile.Read</c>. Because there is exactly one writer and
 /// the field is a naturally-aligned 64-bit value, volatile semantics are
 /// sufficient: we need visibility/ordering, not the read-modify-write atomicity
 /// that <see cref="Interlocked"/> provides.
@@ -17,10 +17,10 @@ namespace SimulaSharp.Kernel.Services;
 /// <para>
 /// Time always advances at real time (1:1). There is no speed factor and no
 /// reset: <see cref="Pause"/> freezes the horizon, <see cref="Start"/> resumes it,
-/// and to start over you create a new <see cref="Simulator"/>.
+/// and to start over you create a new <see cref="SimulatorBase"/>.
 /// </para>
 /// </summary>
-public sealed class SimClock : IClock
+public sealed class SimClock : IClock, IDisposable
 {
     /// <summary>Mission epoch as microseconds since the Unix epoch (constant).</summary>
     private readonly long _missionEpochUs;
@@ -37,7 +37,7 @@ public sealed class SimClock : IClock
 
     /// <summary>
     /// The published horizon (elapsed simulation µs). Written only by the clock
-    /// thread; read by observers via <see cref="Volatile.Read(ref long)"/>.
+    /// thread; read by observers via <c>Volatile.Read</c>.
     /// </summary>
     private long _horizonUs;
 

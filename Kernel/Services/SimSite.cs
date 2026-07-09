@@ -20,7 +20,7 @@ namespace SimulaSharp.Kernel.Services;
 /// While the clock is paused the site blocks, consuming no CPU.
 /// </para>
 /// </summary>
-public sealed class SimSite : IScheduler
+public sealed class SimSite : IScheduler, IDispatcherSite
 {
     private readonly string _name;
     private readonly IClock _clock;

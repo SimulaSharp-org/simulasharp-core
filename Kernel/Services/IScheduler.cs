@@ -3,11 +3,16 @@ using SimulaSharp.Kernel.Primitives;
 namespace SimulaSharp.Kernel.Services;
 
 /// <summary>
-/// The scheduling surface a model uses to run work on its own SimSite. Delays are
-/// relative to the clock's current time. Actions receive no time argument — read
+/// The sim-time scheduling surface a model uses to run work on its own SimSite. Extends
+/// <see cref="IDispatcher"/> (cross-thread marshalling) with a queue of work ordered by simulation
+/// time. Delays are relative to the clock's current time; actions receive no time argument — read
 /// the clock (<see cref="IClock.SimNowUs"/>) when "now" is needed.
+/// <para>
+/// It carries no lifecycle: a model holds an <see cref="IScheduler"/> and so cannot start, stop, or
+/// dispose the site it runs on — that is the simulator's job (via <see cref="ISite"/>).
+/// </para>
 /// </summary>
-public interface IScheduler : IDisposable
+public interface IScheduler : IDispatcher
 {
     /// <summary>Schedules a one-shot action to run <paramref name="delayUs"/> µs from now.</summary>
     /// <returns>The event id, or -1 if the queue is full.</returns>
@@ -49,19 +54,4 @@ public interface IScheduler : IDisposable
 
     /// <summary>Cancels a pending event by id; no effect if it has already fired or the id is unknown.</summary>
     void RemoveEvent(int id);
-
-    /// <summary>Fire-and-forget cross-thread work, run on this site's thread during its next drain.</summary>
-    void Post(Action action);
-
-    /// <summary>
-    /// Runs cross-thread work on this site's thread; the returned task completes when it
-    /// finishes (or faults if it throws).
-    /// </summary>
-    Task InjectVoidAsync(Action action);
-
-    /// <summary>
-    /// Runs a cross-thread function on this site's thread; the returned task yields its
-    /// result (or faults if it throws).
-    /// </summary>
-    Task<T> InjectAsync<T>(Func<T> action);
 }

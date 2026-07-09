@@ -27,6 +27,8 @@ public sealed class ServiceGeneratorTests
         {
             Assert.That(r.AllSource, Does.Contain("__evt_Ping"));
             Assert.That(r.AllSource, Does.Contain("public void RegisterCallback_Ping("));
+            Assert.That(r.AllSource, Does.Contain("global::SimulaSharp.Kernel.Services.IDispatcher dispatcher"),
+                "subscribers register with their site's IDispatcher facet");
             Assert.That(r.AllSource, Does.Contain("protected void Trigger_Ping()"));
         });
     }
@@ -49,7 +51,7 @@ public sealed class ServiceGeneratorTests
         Assert.Multiple(() =>
         {
             Assert.That(r.AllSource, Does.Contain("public global::System.Threading.Tasks.Task DoIt()"));
-            Assert.That(r.AllSource, Does.Contain("Scheduler.InjectVoidAsync(() => Handle_DoIt())"));
+            Assert.That(r.AllSource, Does.Contain("Site.InjectVoidAsync(() => Handle_DoIt())"));
         });
     }
 
@@ -60,7 +62,7 @@ public sealed class ServiceGeneratorTests
         Assert.Multiple(() =>
         {
             Assert.That(r.AllSource, Does.Contain("Task<int> Compute(int x)"));
-            Assert.That(r.AllSource, Does.Contain("Scheduler.InjectAsync(() => Handle_Compute(x))"));
+            Assert.That(r.AllSource, Does.Contain("Site.InjectAsync(() => Handle_Compute(x))"));
         });
     }
 }

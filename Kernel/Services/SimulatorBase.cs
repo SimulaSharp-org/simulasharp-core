@@ -20,7 +20,7 @@ public abstract class SimulatorBase : ISimulator
 {
     private readonly SimClock _clock;
     private readonly LogRouter _router = new();
-    private readonly List<SimSite> _sites = [];
+    private readonly List<ISite> _sites = [];
     private readonly List<IModel> _models = [];
     private readonly List<IService> _services = [];
     private readonly List<Knob> _knobs = [];
@@ -126,6 +126,18 @@ public abstract class SimulatorBase : ISimulator
     }
 
     /// <summary>
+    /// Registers a clock-ungated (loosely-coupled) service — adopting its
+    /// <see cref="LooselyCoupledSite"/> into the simulation's lifecycle (started, stopped, and
+    /// disposed with the run) and its <c>Configure</c>/<c>Dispose</c> hooks.
+    /// </summary>
+    protected T RegisterLooselyCoupledService<T>(T service) where T : LooselyCoupledServiceBase
+    {
+        _services.Add(service);
+        _sites.Add(service.Site);
+        return service;
+    }
+
+    /// <summary>
     /// Implemented by the generated subclass: construct the SimSites and model tree,
     /// wire references, and fill config values, using the protected building blocks.
     /// </summary>
@@ -166,6 +178,9 @@ public abstract class SimulatorBase : ISimulator
 
     /// <inheritdoc/>
     public void Stop() => _clock.Pause();
+
+    /// <inheritdoc/>
+    public void RunFor(long durationUs) => _clock.RunFor(durationUs);
 
     /// <summary>
     /// Tears the simulation down (single-use, no reset): stop every site thread, run

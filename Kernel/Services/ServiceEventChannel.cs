@@ -3,7 +3,7 @@ namespace SimulaSharp.Kernel.Services;
 /// <summary>
 /// Backing for a payload-less fire-and-forget <c>[ServiceEvent]</c>. Holds the
 /// subscribers (each a callback plus the scheduler it must run on) and, on
-/// <see cref="Trigger"/>, <see cref="IScheduler.Post"/>s each callback onto its own
+/// <see cref="Trigger"/>, <see cref="IDispatcher.Post"/>s each callback onto its own
 /// site. The subscriber list is copy-on-write, so triggering is lock-free and
 /// registration is safe from any thread. The generated service wraps one of these per
 /// event behind <c>Trigger_&lt;Name&gt;()</c> / <c>RegisterCallback_&lt;Name&gt;(...)</c>.
@@ -11,14 +11,14 @@ namespace SimulaSharp.Kernel.Services;
 public sealed class ServiceEventChannel
 {
     private readonly object _lock = new();
-    private volatile (IScheduler Scheduler, Action Callback)[] _subs = [];
+    private volatile (IDispatcher Scheduler, Action Callback)[] _subs = [];
 
     /// <summary>Subscribes <paramref name="callback"/>, to be invoked on <paramref name="scheduler"/>.</summary>
-    public void Register(IScheduler scheduler, Action callback)
+    public void Register(IDispatcher scheduler, Action callback)
     {
         lock (_lock)
         {
-            var updated = new (IScheduler, Action)[_subs.Length + 1];
+            var updated = new (IDispatcher, Action)[_subs.Length + 1];
             Array.Copy(_subs, updated, _subs.Length);
             updated[_subs.Length] = (scheduler, callback);
             _subs = updated;
@@ -42,14 +42,14 @@ public sealed class ServiceEventChannel
 public sealed class ServiceEventChannel<T>
 {
     private readonly object _lock = new();
-    private volatile (IScheduler Scheduler, Action<T> Callback)[] _subs = [];
+    private volatile (IDispatcher Scheduler, Action<T> Callback)[] _subs = [];
 
     /// <summary>Subscribes <paramref name="callback"/>, to be invoked on <paramref name="scheduler"/>.</summary>
-    public void Register(IScheduler scheduler, Action<T> callback)
+    public void Register(IDispatcher scheduler, Action<T> callback)
     {
         lock (_lock)
         {
-            var updated = new (IScheduler, Action<T>)[_subs.Length + 1];
+            var updated = new (IDispatcher, Action<T>)[_subs.Length + 1];
             Array.Copy(_subs, updated, _subs.Length);
             updated[_subs.Length] = (scheduler, callback);
             _subs = updated;
