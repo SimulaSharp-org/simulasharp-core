@@ -107,6 +107,72 @@ public sealed class SimulatorGeneratorTests
     }
 
     [Test]
+    public void Services_can_reference_services_including_cyclically()
+    {
+        // Two services that [ServiceRef] each other. The simulator constructs both before binding any
+        // dep, so the cycle resolves by setter injection — A.Other = B and B.Other = A.
+        const string world = World + """
+
+            public partial class SvcA : ServiceBase
+            {
+                public SvcA(IClock c, ILogger l) : base(c, l, "A") { }
+                [ServiceRef] public SvcB Other { get; set; } = null!;
+            }
+            public partial class SvcB : ServiceBase
+            {
+                public SvcB(IClock c, ILogger l) : base(c, l, "B") { }
+                [ServiceRef] public SvcA Other { get; set; } = null!;
+            }
+            """;
+        var r = Run("""
+            Simulator:
+              Name: Widget
+              Services:
+                - Name: A
+                  Type: Demo.SvcA
+                  Deps:
+                    - Other: B
+                - Name: B
+                  Type: Demo.SvcB
+                  Deps:
+                    - Other: A
+              Sites: []
+            """, world);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Diagnostics, Is.Empty, "cyclic service deps reported: " + string.Join(",", r.Ids));
+            // A → __c0, B → __c1 (services minted first); each is assigned the other after construction.
+            Assert.That(r.AllSource, Does.Contain("__c0.Other = __c1;"));
+            Assert.That(r.AllSource, Does.Contain("__c1.Other = __c0;"));
+        });
+    }
+
+    [Test]
+    public void A_service_dep_naming_an_unknown_service_reports_SIM013()
+    {
+        const string world = World + """
+
+            public partial class SvcA : ServiceBase
+            {
+                public SvcA(IClock c, ILogger l) : base(c, l, "A") { }
+                [ServiceRef] public Svc Other { get; set; } = null!;
+            }
+            """;
+        var r = Run("""
+            Simulator:
+              Name: W
+              Services:
+                - Name: A
+                  Type: Demo.SvcA
+                  Deps:
+                    - Other: Nope
+              Sites: []
+            """, world);
+        Assert.That(r.HasDiagnostic("SIM013"), Is.True);
+    }
+
+    [Test]
     public void SIM001_reports_a_parse_error()
     {
         var r = Run("Simulator: : : [unclosed");

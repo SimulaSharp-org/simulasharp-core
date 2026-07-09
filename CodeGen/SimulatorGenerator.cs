@@ -95,6 +95,13 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             init.Append("        var ").Append(v).Append(" = ").Append(register).Append("(new global::").Append(svc.Type)
                 .Append("(Clock, CreateLogger(").Append(Str(name + "." + svc.Name)).AppendLine(")));");
             EmitConfig(init, v, svc.Config);
+
+            // Service→service deps: each entry is { <member>: serviceName }. Bound in the later pass
+            // (loop 3) once every service var exists, so a service may reference one declared after it —
+            // and two services may reference each other cyclically (setter injection breaks the cycle).
+            foreach (var entry in svc.Deps ?? [])
+            foreach (var kv in entry)
+                ctx.Deps.Add((v, kv.Key, kv.Value));
         }
 
         // 2. Sites + model trees
@@ -271,6 +278,14 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                 if (t is not null && !services.ContainsKey(svc.Name)) services[svc.Name] = t;
             }
 
+            // Service→service deps, validated after the whole service table is known so a service may
+            // reference one declared later (and two services may reference each other cyclically).
+            foreach (var svc in sim.Services ?? [])
+                if (services.TryGetValue(svc.Name, out var holder))
+                    foreach (var entry in svc.Deps ?? [])
+                        foreach (var kv in entry)
+                            CheckDep(holder, kv.Key, kv.Value, services);
+
             var paths = new Dictionary<string, INamedTypeSymbol>();
             var pendingRefs = new List<(string Field, ITypeSymbol? Elem, string Path)>();
             foreach (var site in sim.Sites ?? [])
@@ -297,12 +312,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
 
             foreach (var entry in node.Deps ?? [])
                 foreach (var kv in entry)
-                {
-                    var member = FindMember(type, kv.Key);
-                    if (member is null || !HasAttr(member, _serviceRefAttr)) Report(BadServiceRef, kv.Key, type.Name);
-                    else if (!services.TryGetValue(kv.Value, out var svcType)) Report(UnknownService, kv.Key, kv.Value);
-                    else if (MemberType(member) is { } mt && !Assignable(svcType, mt)) Report(ServiceMismatch, kv.Value, kv.Key);
-                }
+                    CheckDep(type, kv.Key, kv.Value, services);
 
             foreach (var entry in node.Models ?? [])
                 foreach (var kv in entry)
@@ -326,6 +336,20 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                     foreach (var p in kv.Value ?? [])
                         pendingRefs.Add((kv.Key, elem, p));
                 }
+        }
+
+        /// <summary>
+        /// Validates one <c>[ServiceRef]</c> dependency on <paramref name="holderType"/> (a model or a
+        /// service): the member exists and is <c>[ServiceRef]</c>, the named service is known, and it is
+        /// assignable to the member. Shared by model deps and service→service deps.
+        /// </summary>
+        private void CheckDep(INamedTypeSymbol holderType, string member, string targetService,
+            Dictionary<string, INamedTypeSymbol> services)
+        {
+            var m = FindMember(holderType, member);
+            if (m is null || !HasAttr(m, _serviceRefAttr)) Report(BadServiceRef, member, holderType.Name);
+            else if (!services.TryGetValue(targetService, out var svcType)) Report(UnknownService, member, targetService);
+            else if (MemberType(m) is { } mt && !Assignable(svcType, mt)) Report(ServiceMismatch, targetService, member);
         }
 
         private INamedTypeSymbol? ResolveType(string typeName, string instance, bool service)
@@ -426,6 +450,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public string Name { get; set; } = "";
         public string Type { get; set; } = "";
         public Dictionary<string, string>? Config { get; set; }
+        public List<Dictionary<string, string>>? Deps { get; set; }              // service→service deps
     }
 
     private sealed class SiteDesc
