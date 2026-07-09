@@ -8,6 +8,9 @@
         <IsRoslynComponent>true</IsRoslynComponent>
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
         <IncludeBuildOutput>false</IncludeBuildOutput>
+        <!-- Analyzer package: the generator ships under analyzers/, not lib/, and carries no runtime deps. -->
+        <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+        <DevelopmentDependency>true</DevelopmentDependency>
         <AssemblyName>SimulaSharp.CodeGen</AssemblyName>
         <RootNamespace>SimulaSharp.CodeGen</RootNamespace>
         <!-- RS2008: analyzer-release-tracking for the SIMxxx diagnostics; not packaging release notes.
@@ -25,6 +28,10 @@
     <!-- Ship the <SimAssembly> item support so consumers auto-import it from the package. -->
     <ItemGroup>
         <None Include="build\SimulaSharp.CodeGen.targets" Pack="true" PackagePath="build\" />
+        <!-- Pack the generator assembly + its bundled YamlDotNet as the analyzer (IncludeBuildOutput=false keeps
+             them out of lib/). NuGet auto-registers everything under analyzers/dotnet/cs as an analyzer. -->
+        <None Include="$(OutputPath)\SimulaSharp.CodeGen.dll" Pack="true" PackagePath="analyzers\dotnet\cs" Visible="false" />
+        <None Include="$(PkgYamlDotNet)\lib\netstandard2.0\YamlDotNet.dll" Pack="true" PackagePath="analyzers\dotnet\cs" Visible="false" />
     </ItemGroup>
 
     <!-- Bundle YamlDotNet.dll alongside the analyzer so it loads in the compiler process. -->

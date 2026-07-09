@@ -20,7 +20,7 @@ public sealed class SimulatorGeneratorTests
             public Plant(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
             public Container<Unit> Units { get; } = new();
             [ServiceRef] public Svc Dep { get; set; } = null!;
-            [Config] public int Capacity { get; set; }
+            [Parameter] public int Capacity { get; set; }
         }
         public partial class Unit : ModelBase
         {
@@ -68,7 +68,7 @@ public sealed class SimulatorGeneratorTests
             Assert.That(r.AllSource, Does.Contain("RegisterService(new global::Demo.Svc("));
             Assert.That(r.AllSource, Does.Contain("CreateSite(\"Main\""));
             Assert.That(r.AllSource, Does.Contain("Register(new global::Demo.Plant("));
-            Assert.That(r.AllSource, Does.Contain("__ApplyConfig"));
+            Assert.That(r.AllSource, Does.Contain("__ApplyParameters"));
             Assert.That(r.AllSource, Does.Contain("CollectKnobsFrom"));
             Assert.That(r.AllSource, Does.Contain("CollectPlottablesFrom"));
             Assert.That(r.AllSource, Does.Contain(".Units.Add("));

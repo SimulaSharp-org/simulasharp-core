@@ -1,6 +1,7 @@
 using SimulaSharp.Kernel.Knobs;
 using SimulaSharp.Kernel.Logging;
 using SimulaSharp.Kernel.Model;
+using SimulaSharp.Kernel.Parameters;
 using SimulaSharp.Kernel.Plotting;
 using SimulaSharp.Kernel.Primitives;
 using SimulaSharp.Kernel.Services;
@@ -36,7 +37,7 @@ internal sealed class DummyModelRef(DummyModel model) : IModelRef
 /// generators would emit, so <see cref="SimulatorBase"/> discovery can be tested without codegen.
 /// </summary>
 internal sealed class ProbeModel(IClock clock, IScheduler scheduler, ILogger logger)
-    : IModel, IKnobProvider, IPlottableProvider
+    : IModel, IKnobProvider, IPlottableProvider, IParameterProvider
 {
     private int _speed;
     private double _load;
@@ -48,6 +49,20 @@ internal sealed class ProbeModel(IClock clock, IScheduler scheduler, ILogger log
 
     public bool Configured { get; private set; }
     public bool Disposed { get; private set; }
+
+    /// <summary>A build-time parameter (stands in for a <c>[Parameter(100)]</c> member); default 100.</summary>
+    public int RatedSpeed { get; set; } = 100;
+
+    public void CollectParameters(string pathPrefix, ICollection<ParameterInfo> into) =>
+        into.Add(new ParameterInfo
+        {
+            Path = pathPrefix + ".RatedSpeed",
+            Name = "RatedSpeed",
+            ValueType = "int",
+            ReadBoxed = () => RatedSpeed,
+            WriteBoxed = v => RatedSpeed = (int)v!,
+            Default = 100,
+        });
 
     /// <summary>The discovered knob for <c>Speed</c> (null until <see cref="CollectKnobs"/> runs).</summary>
     public Knob? SpeedKnob => _speedKnob;
@@ -82,18 +97,20 @@ internal sealed class ProbeModel(IClock clock, IScheduler scheduler, ILogger log
         };
 }
 
-/// <summary>A concrete <see cref="SimulatorBase"/> wired by hand (no generated OnInitialize).</summary>
-internal sealed class ProbeSimulator() : SimulatorBase(new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+/// <summary>A concrete <see cref="SimulatorBase"/> wired by hand in the constructor (no codegen).</summary>
+internal sealed class ProbeSimulator : SimulatorBase
 {
-    /// <summary>The single model built in <see cref="OnInitialize"/> (exposed for assertions).</summary>
-    public ProbeModel? Model { get; private set; }
+    /// <summary>The single model built in the constructor (exposed for assertions).</summary>
+    public ProbeModel Model { get; }
 
-    protected override void OnInitialize()
+    public ProbeSimulator() : base(new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc))
     {
         var site = CreateSite("Probe");
         Model = Register(new ProbeModel(Clock, site, CreateLogger("Sim.Probe")));
         CollectKnobsFrom(Model, "Sim.Probe");
         CollectPlottablesFrom(Model, "Sim.Probe");
+        CollectParametersFrom(Model, "Sim.Probe");
+        OnAssembled();
     }
 }
 

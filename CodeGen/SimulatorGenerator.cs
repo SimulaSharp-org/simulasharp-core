@@ -13,9 +13,10 @@ namespace SimulaSharp.CodeGen;
 /// <summary>
 /// Generates a <c>&lt;Name&gt;Simulator : SimulatorBase</c> from each
 /// <c>*.simassembly.yaml</c> (an <c>AdditionalFiles</c> item), parsed with YamlDotNet.
-/// The generated <c>OnInitialize</c> creates the sites, constructs the services and the
-/// model tree (depth-first, wiring containment and applying config), and binds service
-/// dependencies. References are not yet wired (pending the reference-accessor generator).
+/// The generated <b>constructor</b> creates the sites, constructs the services and the
+/// model tree (depth-first, wiring containment and applying parameters), binds service
+/// dependencies, discovers knobs/plottables/parameters, and calls <c>OnAssembled</c> — so a
+/// freshly-constructed simulator is already assembled and ready to tune then Configure.
 /// <para>
 /// Conventions (v1): YAML <c>Type</c> is the fully-qualified type name; models have a
 /// <c>(IClock, IScheduler, ILogger)</c> ctor and services a <c>(IClock, ILogger)</c> ctor;
@@ -95,6 +96,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             init.Append("        var ").Append(v).Append(" = ").Append(register).Append("(new global::").Append(svc.Type)
                 .Append("(Clock, CreateLogger(").Append(Str(name + "." + svc.Name)).AppendLine(")));");
             EmitConfig(init, v, svc.Config);
+            init.Append("        CollectParametersFrom(").Append(v).Append(", ").Append(Str(name + "." + svc.Name)).AppendLine(");");
 
             // Service→service deps: each entry is { <member>: serviceName }. Bound in the later pass
             // (loop 3) once every service var exists, so a service may reference one declared after it —
@@ -136,11 +138,12 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         sb.AppendLine("#nullable enable");
         sb.Append("public sealed class ").Append(name).AppendLine("Simulator : global::SimulaSharp.Kernel.Services.SimulatorBase");
         sb.AppendLine("{");
-        sb.Append("    public ").Append(name).Append("Simulator() : base(").Append(missionStart).AppendLine(") { }");
-        sb.AppendLine();
-        sb.AppendLine("    protected override void OnInitialize()");
+        // The topology is assembled in the constructor: a freshly-new'd simulator is ready to tune
+        // (GetParams/SetParam) and Configure — there is no separate Initialize() phase.
+        sb.Append("    public ").Append(name).Append("Simulator() : base(").Append(missionStart).AppendLine(")");
         sb.AppendLine("    {");
         sb.Append(init);
+        sb.AppendLine("        OnAssembled();");
         sb.AppendLine("    }");
         sb.AppendLine("}");
 
@@ -160,6 +163,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         EmitConfig(sb, v, node.Config);
         sb.Append("        CollectKnobsFrom(").Append(v).Append(", ").Append(Str(fullPath)).AppendLine(");");
         sb.Append("        CollectPlottablesFrom(").Append(v).Append(", ").Append(Str(fullPath)).AppendLine(");");
+        sb.Append("        CollectParametersFrom(").Append(v).Append(", ").Append(Str(fullPath)).AppendLine(");");
 
         // Containment: each entry is { <containerFieldName>: [children] }
         foreach (var entry in node.Models ?? [])
@@ -187,7 +191,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
     {
         if (config is null || config.Count == 0) return;
         sb.Append("        ").Append(target)
-            .Append(".__ApplyConfig(new global::System.Collections.Generic.Dictionary<string, string?> { ");
+            .Append(".__ApplyParameters(new global::System.Collections.Generic.Dictionary<string, string?> { ");
         sb.Append(string.Join(", ", config.Select(kv => $"[{Str(kv.Key)}] = {Str(kv.Value)}")));
         sb.AppendLine(" });");
     }
@@ -234,7 +238,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor BadServiceRef = D("SIM012", "Invalid dependency", "Dependency member '{0}' was not found on '{1}' or is not [ServiceRef]");
     private static readonly DiagnosticDescriptor UnknownService = D("SIM013", "Unknown service", "Dependency '{0}' names unknown service '{1}'");
     private static readonly DiagnosticDescriptor ServiceMismatch = D("SIM014", "Service type mismatch", "Service '{0}' is not assignable to dependency member '{1}'");
-    private static readonly DiagnosticDescriptor UnknownConfigKey = D("SIM015", "Unknown config key", "Config key '{0}' has no matching [Config] member on '{1}'", DiagnosticSeverity.Warning);
+    private static readonly DiagnosticDescriptor UnknownConfigKey = D("SIM015", "Unknown config key", "Config key '{0}' has no matching [Parameter] member on '{1}'", DiagnosticSeverity.Warning);
 
     // ── Validator ───────────────────────────────────────────────────────────────
     private sealed class Validator
@@ -254,7 +258,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             _iService = c.GetTypeByMetadataName("SimulaSharp.Kernel.Model.IService");
             _container = c.GetTypeByMetadataName("SimulaSharp.Kernel.Primitives.Container`1");
             _reference = c.GetTypeByMetadataName("SimulaSharp.Kernel.Primitives.Reference`1");
-            _configAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ConfigAttribute");
+            _configAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ParameterAttribute");
             _serviceRefAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ServiceRefAttribute");
             _iClock = c.GetTypeByMetadataName("SimulaSharp.Kernel.Services.IClock");
             _iScheduler = c.GetTypeByMetadataName("SimulaSharp.Kernel.Services.IScheduler");

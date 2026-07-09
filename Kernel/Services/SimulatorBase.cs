@@ -1,6 +1,7 @@
 using SimulaSharp.Kernel.Knobs;
 using SimulaSharp.Kernel.Logging;
 using SimulaSharp.Kernel.Model;
+using SimulaSharp.Kernel.Parameters;
 using SimulaSharp.Kernel.Plotting;
 
 namespace SimulaSharp.Kernel.Services;
@@ -11,9 +12,11 @@ namespace SimulaSharp.Kernel.Services;
 /// SimSites and the constructed models/services, fans log entries out to the
 /// registered sinks, and implements the <see cref="ISimulator"/> lifecycle.
 /// <para>
-/// The generated subclass supplies the topology by implementing
-/// <see cref="OnInitialize"/> with the protected building blocks below (create sites,
-/// mint loggers, construct and register components, wire references, fill config).
+/// The generated subclass supplies the topology <b>in its constructor</b>, using the protected building blocks
+/// below (create sites, mint loggers, construct and register components, apply parameters, wire references,
+/// discover knobs/plottables/parameters), then calls <see cref="OnAssembled"/>. So a freshly-<c>new</c>'d
+/// simulator is already assembled — the host may read/override parameters via <see cref="GetParams"/>/
+/// <see cref="SetParam"/>, then <see cref="Configure"/> and <see cref="Start"/>.
 /// </para>
 /// </summary>
 public abstract class SimulatorBase : ISimulator
@@ -26,6 +29,7 @@ public abstract class SimulatorBase : ISimulator
     private readonly List<Knob> _knobs = [];
     private readonly List<IKnobChannel> _knobChannels = [];
     private readonly Dictionary<string, Plottable> _plottables = [];
+    private readonly List<ParameterInfo> _parameters = [];
 
     private SimulatorState _state = SimulatorState.Initial;
 
@@ -49,6 +53,19 @@ public abstract class SimulatorBase : ISimulator
 
     /// <inheritdoc/>
     public IReadOnlyDictionary<string, Plottable> Plottables => _plottables;
+
+    /// <inheritdoc/>
+    public IReadOnlyList<ParameterInfo> GetParams() => _parameters;
+
+    /// <inheritdoc/>
+    public void SetParam(ParameterInfo parameter, object value)
+    {
+        ArgumentNullException.ThrowIfNull(parameter);
+        if (_state >= SimulatorState.Configured)
+            throw new InvalidOperationException(
+                "Parameters can only be set before Configure() — they are fixed once the run is configured.");
+        parameter.Write(value);
+    }
 
     // ── Logging ─────────────────────────────────────────────────────────────────
 
@@ -96,6 +113,11 @@ public abstract class SimulatorBase : ISimulator
     protected void CollectPlottablesFrom(IModel model, string fullPath) =>
         (model as IPlottableProvider)?.CollectPlottables(fullPath, _plottables);
 
+    /// <summary>Collects an instance's parameters (if any) into the simulation's list, stamped with its full path.
+    /// Works for both models and services (either may declare <c>[Parameter]</c> members).</summary>
+    protected void CollectParametersFrom(object instance, string fullPath) =>
+        (instance as IParameterProvider)?.CollectParameters(fullPath, _parameters);
+
     /// <summary>
     /// Samples every plottable in one sweep, stamped with a single mission time
     /// (<see cref="IClock.MissionNowUs"/>) read once — so all points in the returned frame
@@ -138,26 +160,23 @@ public abstract class SimulatorBase : ISimulator
     }
 
     /// <summary>
-    /// Implemented by the generated subclass: construct the SimSites and model tree,
-    /// wire references, and fill config values, using the protected building blocks.
+    /// Called by the generated constructor once the topology is fully assembled (sites, model/service tree,
+    /// applied parameters, wired references, discovered knobs/plottables/parameters). Marks the simulator
+    /// ready and hands any registered knob channels the discovered knobs. After this, the host may tune
+    /// parameters (<see cref="GetParams"/>/<see cref="SetParam"/>) and then <see cref="Configure"/>.
     /// </summary>
-    protected abstract void OnInitialize();
+    protected void OnAssembled()
+    {
+        if (_state < SimulatorState.Initialized) _state = SimulatorState.Initialized;
+        foreach (var channel in _knobChannels) AttachChannel(channel);
+    }
 
     // ── ISimulator lifecycle ────────────────────────────────────────────────────
 
     /// <inheritdoc/>
-    public void Initialize()
-    {
-        if (_state >= SimulatorState.Initialized) return;
-        OnInitialize();
-        _state = SimulatorState.Initialized;
-        foreach (var channel in _knobChannels) AttachChannel(channel);
-    }
-
-    /// <inheritdoc/>
     public void Configure()
     {
-        if (_state < SimulatorState.Initialized) throw new InvalidOperationException("Initialize() must run before Configure().");
+        if (_state < SimulatorState.Initialized) throw new InvalidOperationException("The simulator is not assembled.");
         if (_state >= SimulatorState.Configured) return;
         foreach (var service in _services) service.Configure();
         foreach (var model in _models) model.Configure();

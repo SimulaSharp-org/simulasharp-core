@@ -42,7 +42,6 @@ public sealed class SimulatorPackageTests
         ISimulator sim = pkg.Create("Foo");
         try
         {
-            sim.Initialize();
             sim.Configure();
             sim.Start();
             Assert.That(sim.State, Is.EqualTo(SimulatorState.Running));
@@ -105,7 +104,6 @@ public sealed class SimulatorPackageTests
     private static void RunOne(SimulatorPackage pkg)
     {
         var sim = pkg.Create("Foo");
-        sim.Initialize();
         sim.Configure();
         sim.Start();
         sim.Stop();

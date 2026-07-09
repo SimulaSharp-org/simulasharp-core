@@ -1,5 +1,6 @@
 using SimulaSharp.Kernel.Knobs;
 using SimulaSharp.Kernel.Logging;
+using SimulaSharp.Kernel.Parameters;
 using SimulaSharp.Kernel.Plotting;
 
 namespace SimulaSharp.Kernel.Services;
@@ -7,9 +8,9 @@ namespace SimulaSharp.Kernel.Services;
 /// <summary>
 /// The control endpoint for a whole simulation. A generated
 /// <c>&lt;SimName&gt;Simulator</c> implements this (over <c>SimulatorBase</c>). The
-/// driver (MMI or CLI) walks the lifecycle: register any log sinks, then
-/// <see cref="Initialize"/> (build the topology), <see cref="Configure"/> (run each
-/// model's setup), then <see cref="Start"/>/<see cref="Stop"/>.
+/// driver (MMI or CLI) walks the lifecycle: constructing the simulator <b>assembles</b> the topology, then
+/// register any log sinks, optionally tune parameters (<see cref="GetParams"/>/<see cref="SetParam"/>), run
+/// <see cref="Configure"/> (each model's setup), then <see cref="Start"/>/<see cref="Stop"/>.
 /// <para>Single-use: there is no reset — <see cref="IDisposable.Dispose"/> tears it down.</para>
 /// </summary>
 public interface ISimulator : IDisposable
@@ -52,10 +53,21 @@ public interface ISimulator : IDisposable
     /// <returns>The mission time (µs) of the sweep and a path → value snapshot.</returns>
     (long MissionTimeUs, IReadOnlyDictionary<string, double> Values) SamplePlottables();
 
-    /// <summary>Builds the topology: constructs the SimSites and model tree, wires references, fills config.</summary>
-    void Initialize();
+    /// <summary>
+    /// The discovered build-time parameters across every model and service instance (populated when the
+    /// simulator is constructed), keyed by full dotted instance path. Read a value, or override it with
+    /// <see cref="SetParam"/> — but only <b>before</b> <see cref="Configure"/>.
+    /// </summary>
+    IReadOnlyList<ParameterInfo> GetParams();
 
-    /// <summary>Runs every model's and service's <c>Configure()</c> depth-first. Call after <see cref="Initialize"/>.</summary>
+    /// <summary>
+    /// Overrides a parameter's value before the run is configured. Throws if called after
+    /// <see cref="Configure"/> (parameters are fixed for the run). <paramref name="value"/> must be the
+    /// parameter's declared type (boxed).
+    /// </summary>
+    void SetParam(ParameterInfo parameter, object value);
+
+    /// <summary>Runs every model's and service's <c>Configure()</c> depth-first. Call after tuning parameters.</summary>
     void Configure();
 
     /// <summary>Starts or resumes the run.</summary>
