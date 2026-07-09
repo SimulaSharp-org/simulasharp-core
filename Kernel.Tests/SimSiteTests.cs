@@ -53,6 +53,23 @@ public sealed class SimSiteTests
     }
 
     [Test]
+    public void A_tight_periodic_keeps_its_cadence_under_precise_waking()
+    {
+        // Regression guard for clock-driven waking: a 5 ms periodic over 50 ms must fire ~10 times.
+        // A park that trusts the OS timer (~15 ms granularity) would drop most of these — this asserts
+        // the clock delivers the on-time wake, so idle sites park (no busy-spin) without losing cadence.
+        var (clock, site) = NewRunning();
+        using var _ = clock; using var __ = site;
+        int n = 0;
+
+        site.InjectVoidAsync(() => site.AddPeriodicEvent(() => Interlocked.Increment(ref n), 5_000)).Wait();
+        clock.RunFor(50_000);
+
+        Assert.That(WaitUntil(() => Volatile.Read(ref n) >= 8), Is.True,
+            $"tight periodic fired only {Volatile.Read(ref n)} times in 50 ms — waking is not on time");
+    }
+
+    [Test]
     public void AddCoroutine_steps_across_yields()
     {
         var (clock, site) = NewRunning();

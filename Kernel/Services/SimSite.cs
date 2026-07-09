@@ -13,15 +13,29 @@ namespace SimulaSharp.Kernel.Services;
 /// site's thread, so the event queue is only ever touched single-threaded.
 /// </para>
 /// <para>
-/// <b>Execution:</b> while the clock is running the site <em>busy-spins</em> — it
-/// reads the clock's horizon, fires everything now due, and loops. A busy-spin
-/// (rather than a timed wait) is required for microsecond-accurate hard real-time
-/// and to stay responsive to ad-hoc work injected by other threads at any moment.
-/// While the clock is paused the site blocks, consuming no CPU.
+/// <b>Execution:</b> while the clock is running the site reads the clock's horizon,
+/// fires everything now due, and loops. When it falls idle it <em>parks</em> (0 CPU)
+/// rather than busy-spinning, so it no longer starves the other site threads or the
+/// external-I/O threads under load. The on-time wake is delivered by the clock itself
+/// — the sole, continuously advancing horizon writer — which releases the site the
+/// instant the horizon reaches its next event (<see cref="IHorizonWaiter"/>), giving
+/// sub-µs precision that does not depend on OS timer granularity. A park is also cut
+/// short by injected inbox work and by a clock pause; the timed wait is only a
+/// backstop. Work due within <see cref="SpinBudgetUs"/> is spun for, shaving the wake
+/// latency off the most imminent events. While the clock is paused the site blocks,
+/// consuming no CPU. See <see cref="RunLoop"/> for the spin/park policy.
 /// </para>
 /// </summary>
-public sealed class SimSite : IScheduler, IDispatcherSite
+public sealed class SimSite : IScheduler, IDispatcherSite, IHorizonWaiter
 {
+    /// <summary>Spin (rather than park) when the next event is within this many µs — keeps hard-real-time latency for
+    /// imminent work while releasing the core when the site is genuinely idle.</summary>
+    private const long SpinBudgetUs = 200;
+
+    /// <summary>Backstop cap (ms) on a park's timed wait. The clock delivers the real, on-time wake; this only
+    /// bounds how long an idle site sleeps before it re-checks state, so nothing ever sleeps blind.</summary>
+    private const int BackstopMs = 1000;
+
     private readonly string _name;
     private readonly IClock _clock;
     private readonly EventQueue _events;
@@ -29,8 +43,17 @@ public sealed class SimSite : IScheduler, IDispatcherSite
     /// <summary>Cross-thread work destined for this site's thread (lock-free).</summary>
     private readonly ConcurrentQueue<Action> _inbox = new();
 
-    /// <summary>Parks the run loop while the clock is paused; released on resume/stop.</summary>
+    /// <summary>Parks the run loop while the clock is paused or the site is idle; released on
+    /// resume/stop, on any cross-thread inbox enqueue, and by the clock when the next event comes due.</summary>
     private readonly AutoResetEvent _resume = new(false);
+
+    /// <summary>The concrete clock when it supports precise horizon wake-ups (it always does today);
+    /// null only if some other <see cref="IClock"/> is supplied, in which case the timed backstop drives waking.</summary>
+    private readonly SimClock? _wakeClock;
+
+    /// <summary>Absolute sim-time (µs) the clock should wake this site at, or <see cref="long.MaxValue"/> when the
+    /// site is not parked on a timed event. Written by this thread before parking; read by the clock thread.</summary>
+    private long _nextWakeUs = long.MaxValue;
 
     private Thread? _thread;
     private volatile bool _running;
@@ -50,6 +73,7 @@ public sealed class SimSite : IScheduler, IDispatcherSite
     {
         _name = name;
         _clock = clock;
+        _wakeClock = clock as SimClock;   // enables precise clock-driven wakes (see IHorizonWaiter)
         _events = new EventQueue(maxEvents);
 
         // When a coroutine awaits a task, resume it (on this thread, via the inbox) once
@@ -74,6 +98,7 @@ public sealed class SimSite : IScheduler, IDispatcherSite
         _clock.Started += OnClockStarted;
         _clock.Stopped += OnClockStopped;
         _running = _clock.IsRunning;   // handle a clock that is already running
+        _wakeClock?.RegisterWaiter(this);   // let the clock deliver precise on-time wakes
 
         _thread = new Thread(RunLoop) { IsBackground = true, Name = $"SimSite-{_name}" };
         _thread.Start();
@@ -86,6 +111,7 @@ public sealed class SimSite : IScheduler, IDispatcherSite
 
         _clock.Started -= OnClockStarted;
         _clock.Stopped -= OnClockStopped;
+        _wakeClock?.UnregisterWaiter(this);
         _disposed = true;
         _resume.Set();      // unblock the loop if parked
         _thread.Join();
@@ -98,7 +124,11 @@ public sealed class SimSite : IScheduler, IDispatcherSite
         _resume.Set();
     }
 
-    private void OnClockStopped(object? sender, EventArgs e) => _running = false;
+    private void OnClockStopped(object? sender, EventArgs e)
+    {
+        _running = false;
+        _resume.Set();      // cut a timed park short so the pause is observed at once
+    }
 
     // ── IScheduler (called on this site's thread) ───────────────────────────────
 
@@ -154,7 +184,11 @@ public sealed class SimSite : IScheduler, IDispatcherSite
     // ── IScheduler (cross-thread inbox) ─────────────────────────────────────────
 
     /// <inheritdoc/>
-    public void Post(Action action) => _inbox.Enqueue(action);
+    public void Post(Action action)
+    {
+        _inbox.Enqueue(action);
+        _resume.Set();          // wake the run loop if it is parked (idle or between events)
+    }
 
     /// <inheritdoc/>
     public Task InjectVoidAsync(Action action)
@@ -165,6 +199,7 @@ public sealed class SimSite : IScheduler, IDispatcherSite
             try { action(); tcs.SetResult(); }
             catch (Exception ex) { tcs.SetException(ex); }
         });
+        _resume.Set();
         return tcs.Task;
     }
 
@@ -177,15 +212,40 @@ public sealed class SimSite : IScheduler, IDispatcherSite
             try { tcs.SetResult(action()); }
             catch (Exception ex) { tcs.SetException(ex); }
         });
+        _resume.Set();
         return tcs.Task;
+    }
+
+    // ── IHorizonWaiter (called on the clock thread) ─────────────────────────────
+
+    /// <inheritdoc/>
+    long IHorizonWaiter.NextWakeUs => Volatile.Read(ref _nextWakeUs);
+
+    /// <inheritdoc/>
+    void IHorizonWaiter.WakeFromClock()
+    {
+        Volatile.Write(ref _nextWakeUs, long.MaxValue);   // consume the request so it isn't re-signalled
+        _resume.Set();
     }
 
     // ── Run loop ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Busy-spins while running: drain the inbox, then fire everything due at the
-    /// clock's current horizon. Parks on <see cref="_resume"/> while paused so a
-    /// stopped simulation costs nothing.
+    /// While running: drain the inbox, then fire everything due at the clock's current horizon.
+    /// <para>
+    /// When the site falls idle (inbox empty, nothing imminently due) it <em>parks</em> on
+    /// <see cref="_resume"/> instead of spinning, releasing the core for the other sites and for
+    /// I/O-bound work on other threads (a blocking ZMQ/serial read, say). It publishes the next event's
+    /// due time in <see cref="_nextWakeUs"/> and the clock — the sole horizon writer — <c>Set</c>s
+    /// <see cref="_resume"/> the instant the horizon reaches it, so the wake is on time to sub-µs without
+    /// busy-spinning or trusting the OS timer. The park is <em>also</em> released by a cross-thread inbox
+    /// enqueue (<see cref="Post"/>/<see cref="InjectAsync{T}"/>) and by a clock pause; the timed
+    /// <c>WaitOne</c> is only a <see cref="BackstopMs"/> safety net so nothing ever sleeps blind (and it
+    /// drives waking at all should some non-<see cref="SimClock"/> clock be used). Work due within
+    /// <see cref="SpinBudgetUs"/> is spun for, shaving the wake latency off the
+    /// most imminent events (and covering manual/batch clocks whose horizon is already at/past due).
+    /// </para>
+    /// While the clock is paused the site blocks on <see cref="_resume"/>, consuming no CPU.
     /// </summary>
     private void RunLoop()
     {
@@ -202,7 +262,23 @@ public sealed class SimSite : IScheduler, IDispatcherSite
 
             _events.ProcessDue(_clock.SimNowUs);
 
-            Thread.SpinWait(1);
+            // Cross-thread work may have landed while we were processing — loop and drain it now.
+            if (!_inbox.IsEmpty)
+                continue;
+
+            long nextDueUs = _events.PeekNextDueTime();   // -1 when nothing is scheduled
+            long waitUs = nextDueUs < 0 ? BackstopMs * 1000L : nextDueUs - _clock.SimNowUs;
+            if (waitUs <= SpinBudgetUs)
+            {
+                Thread.SpinWait(1);                       // imminent (or already due) — spin for latency
+                continue;
+            }
+
+            // Arm the clock to wake us exactly when the horizon reaches the next event, then park. The
+            // timed wait is only a backstop — the clock's Set (or a Post, or a pause) is the real waker.
+            Volatile.Write(ref _nextWakeUs, nextDueUs < 0 ? long.MaxValue : nextDueUs);
+            _resume.WaitOne((int)Math.Clamp(waitUs / 1000, 1, BackstopMs));
+            Volatile.Write(ref _nextWakeUs, long.MaxValue);
         }
     }
 

@@ -63,6 +63,14 @@ public sealed class SimClock : IClock, IDisposable
     private volatile bool _running;
     private volatile bool _disposed;
 
+    /// <summary>
+    /// Sites registered to be woken precisely when the horizon reaches their next event. Copy-on-write:
+    /// registration/removal is rare (site lifecycle) and takes <see cref="_waitersLock"/>; the clock
+    /// thread reads the array lock-free on every tick.
+    /// </summary>
+    private volatile IHorizonWaiter[] _waiters = [];
+    private readonly object _waitersLock = new();
+
     /// <inheritdoc/>
     public event EventHandler? Started;
 
@@ -94,6 +102,48 @@ public sealed class SimClock : IClock, IDisposable
 
     /// <inheritdoc/>
     public bool IsRunning => _running;
+
+    /// <summary>
+    /// Registers a site to receive precise horizon wake-ups (called from <see cref="SimSite.Start"/>).
+    /// Idempotent-safe for the caller: a site registers once when its thread starts.
+    /// </summary>
+    internal void RegisterWaiter(IHorizonWaiter waiter)
+    {
+        lock (_waitersLock)
+        {
+            var old = _waiters;
+            var next = new IHorizonWaiter[old.Length + 1];
+            Array.Copy(old, next, old.Length);
+            next[old.Length] = waiter;
+            _waiters = next;
+        }
+    }
+
+    /// <summary>Unregisters a site (called from <see cref="SimSite.Stop"/>) so a stopped site is never signalled.</summary>
+    internal void UnregisterWaiter(IHorizonWaiter waiter)
+    {
+        lock (_waitersLock)
+        {
+            var old = _waiters;
+            int idx = Array.IndexOf(old, waiter);
+            if (idx < 0) return;
+            var next = new IHorizonWaiter[old.Length - 1];
+            Array.Copy(old, 0, next, 0, idx);
+            Array.Copy(old, idx + 1, next, idx, old.Length - idx - 1);
+            _waiters = next;
+        }
+    }
+
+    /// <summary>Wakes every registered site whose next event has come due at horizon <paramref name="h"/>.</summary>
+    private void SignalDueWaiters(long h)
+    {
+        var waiters = _waiters;   // volatile snapshot; immutable, so safe to iterate lock-free
+        for (int i = 0; i < waiters.Length; i++)
+        {
+            var w = waiters[i];
+            if (h >= w.NextWakeUs) w.WakeFromClock();
+        }
+    }
 
     /// <summary>
     /// Real-time microseconds elapsed in the current running segment. Derived from
@@ -180,6 +230,11 @@ public sealed class SimClock : IClock, IDisposable
 
             long h = _baseUs + SegmentUs();
             Volatile.Write(ref _horizonUs, h);
+
+            // Release any parked site whose next event is now due. Because this thread is the sole,
+            // continuously advancing horizon writer, it delivers the wake with sub-µs precision — so
+            // sites can park (0 CPU when idle) instead of busy-spinning, without losing real-time timing.
+            SignalDueWaiters(h);
 
             // Auto-pause boundary (RunFor/PauseAtSimUs): self-pause on the writer thread so
             // the caller never races the horizon. Pause() disarms the target and parks us.
