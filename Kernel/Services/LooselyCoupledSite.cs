@@ -3,59 +3,45 @@ using System.Collections.Concurrent;
 namespace SimulaSharp.Kernel.Services;
 
 /// <summary>
-/// A <b>clock-ungated</b> scheduling domain for external I/O (e.g. a hardware link): a dedicated
-/// thread that is <em>not</em> driven by the simulation horizon and <em>never</em> parks when the
-/// clock pauses. Unlike a <see cref="SimSite"/> it has no sim-time queue and does not auto-drain —
-/// the owning <see cref="Model.LooselyCoupledServiceBase"/> supplies the loop (its
-/// <c>_EntryPoint</c>) and decides when to service the inbox.
+/// A <b>clock-ungated</b> dispatcher site for external I/O (e.g. a hardware link): a dedicated thread
+/// that is a pure <b>serial executor</b> of the work marshalled to it. It is <see cref="SimSite"/>'s
+/// inbox mechanism with the clock and the sim-time event queue removed — the thread simply drains its
+/// lock-free <see cref="IDispatcher"/> inbox, then <b>sleeps until the next <see cref="Post"/> wakes it</b>
+/// (there is no horizon to advance on, so nothing else can wake it).
 /// <para>
-/// The thread runs the entry point under a <b>single-thread synchronization context</b>, so
-/// <c>await</c>s inside the loop resume on this same thread — the socket/inbox state it touches
-/// stays single-threaded, no locks. Cross-thread work arrives through the lock-free
-/// <see cref="IDispatcher"/> inbox and is executed only when the loop calls <c>ServiceInbox()</c>.
+/// Because every item runs on this one thread, the owning service's state (routing tables, sequence
+/// counters, an outbound socket written inline from a marshalled request) stays single-threaded with no
+/// locks. Blocking I/O that must <em>read</em> concurrently belongs on a separate reader thread the
+/// service owns, which hands inbound work back through <see cref="Post"/>.
 /// </para>
 /// </summary>
 public sealed class LooselyCoupledSite : IDispatcherSite
 {
-    /// <summary>A single-threaded message pump: <see cref="Post"/> queues a continuation, <see cref="Pump"/> runs them on the calling thread until <see cref="Complete"/>.</summary>
-    private sealed class PumpContext : SynchronizationContext
-    {
-        private readonly BlockingCollection<(SendOrPostCallback Callback, object? State)> _queue = new();
-        public override void Post(SendOrPostCallback d, object? state) { try { _queue.Add((d, state)); } catch (InvalidOperationException) { /* completed */ } }
-        public override void Send(SendOrPostCallback d, object? state) => throw new NotSupportedException("LooselyCoupledSite is single-threaded; use Post/InjectAsync.");
-        public void Complete() => _queue.CompleteAdding();
-        public void Pump() { foreach (var (callback, state) in _queue.GetConsumingEnumerable()) callback(state); }
-    }
-
     private readonly string _name;
-    private readonly Func<Task> _entryPoint;
-    private readonly ConcurrentQueue<Action> _inbox = new();
-    private readonly CancellationTokenSource _stop = new();
 
-    private PumpContext? _pump;
+    /// <summary>Cross-thread work destined for this site's thread (lock-free).</summary>
+    private readonly ConcurrentQueue<Action> _inbox = new();
+
+    /// <summary>Parks the executor while the inbox is empty; released by every <see cref="Post"/> and by <see cref="Stop"/>.</summary>
+    private readonly AutoResetEvent _resume = new(false);
+
     private Thread? _thread;
+    private volatile bool _stopped;
 
     /// <param name="name">Diagnostic name (used for the thread name).</param>
-    /// <param name="entryPoint">The loop the thread runs — supplied by the owning service.</param>
-    public LooselyCoupledSite(string name, Func<Task> entryPoint)
-    {
-        _name = name;
-        _entryPoint = entryPoint;
-    }
+    public LooselyCoupledSite(string name) => _name = name;
 
     /// <inheritdoc/>
     public string Name => _name;
 
-    /// <summary>Cancelled when <see cref="Stop"/>/<see cref="Dispose"/> is requested — the entry loop's shutdown signal.</summary>
-    public CancellationToken Stopping => _stop.Token;
-
-    /// <summary>True once shutdown has been requested.</summary>
-    public bool IsStopping => _stop.IsCancellationRequested;
-
     // ── IDispatcher (cross-thread inbox) ────────────────────────────────────────
 
     /// <inheritdoc/>
-    public void Post(Action action) => _inbox.Enqueue(action);
+    public void Post(Action action)
+    {
+        _inbox.Enqueue(action);
+        _resume.Set();          // wake the executor if it is parked
+    }
 
     /// <inheritdoc/>
     public Task InjectVoidAsync(Action action)
@@ -66,6 +52,7 @@ public sealed class LooselyCoupledSite : IDispatcherSite
             try { action(); tcs.SetResult(); }
             catch (Exception ex) { tcs.SetException(ex); }
         });
+        _resume.Set();
         return tcs.Task;
     }
 
@@ -78,13 +65,8 @@ public sealed class LooselyCoupledSite : IDispatcherSite
             try { tcs.SetResult(action()); }
             catch (Exception ex) { tcs.SetException(ex); }
         });
+        _resume.Set();
         return tcs.Task;
-    }
-
-    /// <summary>Runs every currently-queued inbox item on this thread. Called by the owning service's loop.</summary>
-    internal void DrainInbox()
-    {
-        while (_inbox.TryDequeue(out var work)) work();
     }
 
     // ── ISite (lifecycle, driven by the simulator) ──────────────────────────────
@@ -97,22 +79,22 @@ public sealed class LooselyCoupledSite : IDispatcherSite
         _thread.Start();
     }
 
+    /// <summary>Drain everything queued, then sleep until the next <see cref="Post"/> (or <see cref="Stop"/>) wakes us.</summary>
     private void Run()
     {
-        var pump = _pump = new PumpContext();
-        SynchronizationContext.SetSynchronizationContext(pump);
-        Task task = _entryPoint();
-        // When the entry point completes (loop saw shutdown), stop the pump so this thread can exit.
-        task.ContinueWith(_ => pump.Complete(), CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-        pump.Pump();   // runs the entry point's await-continuations on THIS thread until it completes
+        while (!_stopped)
+        {
+            while (_inbox.TryDequeue(out var work)) work();
+            if (!_stopped) _resume.WaitOne();
+        }
     }
 
     /// <inheritdoc/>
     public void Stop()
     {
         if (_thread is null) return;
-        _stop.Cancel();      // unblocks a parked WaitRunning and flips the loop's shutdown check
+        _stopped = true;
+        _resume.Set();      // wake the parked executor so it observes the stop and exits
         _thread.Join();
         _thread = null;
     }
@@ -121,6 +103,6 @@ public sealed class LooselyCoupledSite : IDispatcherSite
     public void Dispose()
     {
         Stop();
-        _stop.Dispose();
+        _resume.Dispose();
     }
 }

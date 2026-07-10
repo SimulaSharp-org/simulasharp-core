@@ -6,12 +6,12 @@ namespace SimulaSharp.Kernel.Services;
 /// </summary>
 public enum SimulatorState
 {
-    /// <summary>Not yet initialized — nothing has been built.</summary>
+    /// <summary>Transient pre-assembly state; a constructed simulator is already <see cref="Initialized"/>.</summary>
     Initial,
 
     /// <summary>
-    /// Models constructed and their containers/references assembled, then config
-    /// values applied — the result of <see cref="ISimulator.Initialize"/>.
+    /// Models constructed and their containers/references assembled, then parameters
+    /// applied — the state a freshly-constructed simulator is in (assembled in its constructor).
     /// </summary>
     Initialized,
 

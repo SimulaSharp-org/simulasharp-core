@@ -30,18 +30,19 @@ public interface ISimulator : IDisposable
     /// </summary>
     void RegisterLogSink(ILogSink sink);
 
-    /// <summary>The discovered knobs across every model instance (populated by <see cref="Initialize"/>).</summary>
+    /// <summary>The discovered knobs across every model instance (populated when the simulator is constructed).</summary>
     IReadOnlyList<Knob> Knobs { get; }
 
     /// <summary>
     /// Registers a knob channel (the MMI). It receives the discovered knobs and a push
-    /// on every value change. May be registered before or after <see cref="Initialize"/>.
+    /// on every value change. Knobs are discovered at construction, so a channel registered any time
+    /// receives them immediately.
     /// </summary>
     void RegisterKnobChannel(IKnobChannel channel);
 
     /// <summary>
-    /// The discovered plot-telemetry points across every model instance (populated by
-    /// <see cref="Initialize"/>), keyed by full dotted instance path. Sample them in one
+    /// The discovered plot-telemetry points across every model instance (populated when the simulator
+    /// is constructed), keyed by full dotted instance path. Sample them in one
     /// mission-time-stamped sweep via <see cref="SamplePlottables"/>.
     /// </summary>
     IReadOnlyDictionary<string, Plottable> Plottables { get; }
