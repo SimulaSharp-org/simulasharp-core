@@ -49,6 +49,7 @@ internal sealed class ProbeModel(IClock clock, IScheduler scheduler, ILogger log
 
     public bool Configured { get; private set; }
     public bool Disposed { get; private set; }
+    private int _ticks;
 
     /// <summary>A build-time parameter (stands in for a <c>[Parameter(100)]</c> member); default 100.</summary>
     public int RatedSpeed { get; set; } = 100;
@@ -69,7 +70,14 @@ internal sealed class ProbeModel(IClock clock, IScheduler scheduler, ILogger log
 
     public double Load { set => Volatile.Write(ref _load, value); }
 
-    public void Configure() => Configured = true;
+    public void Configure()
+    {
+        Configured = true;
+        // A fast periodic so a running clock actively wakes this model's site — exercises the
+        // park-on-idle teardown ordering (clock-thread wakes vs. disposing the site's wait handle).
+        Scheduler.AddPeriodicEvent(() => Interlocked.Increment(ref _ticks), 1_000);
+    }
+
     public void Dispose() => Disposed = true;
 
     public void CollectKnobs(string pathPrefix, ICollection<Knob> into)

@@ -118,6 +118,29 @@ public sealed class SimulatorLifecycleTests
     }
 
     [Test]
+    public void Teardown_does_not_race_the_clock_wake_on_dispose()
+    {
+        // Park-on-idle sites are woken by the clock thread (Set on their wait handle). Teardown must
+        // stop the clock thread before those handles are disposed, or shutdown throws ObjectDisposedException.
+        for (int i = 0; i < 25; i++)   // dispose WHILE running — the clock is actively waking the site
+        {
+            var sim = new ProbeSimulator();
+            sim.Configure();
+            sim.Start();
+            Thread.Sleep(2);           // let the clock tick and wake the site a few times
+            Assert.DoesNotThrow(sim.Dispose, "dispose-while-running raced the clock wake");
+        }
+
+        for (int i = 0; i < 25; i++)   // RunFor then dispose — the stop handler fires on the clock thread
+        {
+            var sim = new ProbeSimulator();
+            sim.Configure();
+            sim.RunFor(3_000);
+            Assert.DoesNotThrow(sim.Dispose, "RunFor→dispose raced the stop handler");
+        }
+    }
+
+    [Test]
     public void Dispose_tears_down_the_models_and_the_clock()
     {
         var sim = new ProbeSimulator();

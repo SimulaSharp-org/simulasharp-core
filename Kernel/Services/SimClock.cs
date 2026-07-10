@@ -186,8 +186,12 @@ public sealed class SimClock : IClock, IDisposable
         Volatile.Write(ref _horizonUs, _baseUs);   // freeze the published horizon exactly
 
         Volatile.Write(ref _pauseAtUs, -1);   // a freeze is never silently re-armed
-        _paused.Set();                        // release any RunFor waiter
+
+        // Run the stop handlers (which may Set() a parked site's wait handle) BEFORE releasing a RunFor
+        // waiter, so RunFor only returns once the run is *fully* stopped — a caller cannot then start
+        // tearing down sites while a stop handler is still touching their handles on this thread.
         Stopped?.Invoke(this, EventArgs.Empty);
+        _paused.Set();                        // now release any RunFor waiter
     }
 
     /// <inheritdoc/>

@@ -202,16 +202,20 @@ public abstract class SimulatorBase : ISimulator
     public void RunFor(long durationUs) => _clock.RunFor(durationUs);
 
     /// <summary>
-    /// Tears the simulation down (single-use, no reset): stop every site thread, run
-    /// each service's then each model's deinit while nothing is executing, then
-    /// dispose the sites and the clock.
+    /// Tears the simulation down (single-use, no reset). Order matters for the park-on-idle sites:
+    /// the clock thread wakes a site by <c>Set()</c>ting its wait handle (per-tick horizon wakes and the
+    /// stop handler), so it must be fully stopped before those handles are disposed. So: pause the clock
+    /// (park its thread, and fire the stop handlers under control), stop every site thread, run each
+    /// service's then each model's deinit while nothing is executing, <b>dispose (join) the clock</b>,
+    /// then — only now that no thread can touch them — dispose the site wait handles.
     /// </summary>
     public void Dispose()
     {
-        foreach (var site in _sites) site.Stop();
+        _clock.Pause();                                              // park the clock thread; no more per-tick wakes
+        foreach (var site in _sites) site.Stop();                   // join each site thread; unregister its waiter
         foreach (var service in _services) service.Dispose();
         for (int i = _models.Count - 1; i >= 0; i--) _models[i].Dispose();
-        foreach (var site in _sites) site.Dispose();
-        _clock.Dispose();
+        _clock.Dispose();                                            // JOIN the clock thread before the next line
+        foreach (var site in _sites) site.Dispose();                // safe now: nothing can Set() these handles
     }
 }
