@@ -10,11 +10,16 @@
         <!-- Emit XML docs so the docs site's API reference can harvest them. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);1591</NoWarn>
+        <Description>The hard-real-time simulation runtime for SimulaSharp: clock, SimSites, event queue, coroutines, model/service base types, associations, and the observability surface. Pulled in transitively by the SimulaSharp meta-package.</Description>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 
     <ItemGroup>
-        <!-- The test suite drives internals (e.g. LooselyCoupledSite.DrainInbox, normally only
-             called by LooselyCoupledServiceBase) directly, to test each site in isolation. -->
+        <None Include="README.md" Pack="true" PackagePath="" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- The test suite drives internals directly, to test each site in isolation. -->
         <InternalsVisibleTo Include="Kernel.Tests" />
     </ItemGroup>
 

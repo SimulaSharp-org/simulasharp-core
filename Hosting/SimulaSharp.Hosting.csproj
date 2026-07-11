@@ -7,7 +7,13 @@
         <!-- Emit XML docs so the docs site's API reference can harvest them. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);1591</NoWarn>
+        <Description>The loader for packed SimulaSharp simulations: a collectible-ALC plugin host (SimulatorPackage) for a runner/MMI. Not needed to author a simulation.</Description>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="README.md" Pack="true" PackagePath="" />
+    </ItemGroup>
 
     <ItemGroup>
         <!-- Shared from the host's Default load context so ISimulator/Knob/Plottable/LogEntry

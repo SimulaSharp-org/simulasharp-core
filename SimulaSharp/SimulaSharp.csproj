@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Meta-package: no code of its own. Packing it emits a .nupkg whose only content is a dependency
+       on the Kernel runtime and the CodeGen analyzer, so a consumer references ONE package. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <PackageId>SimulaSharp</PackageId>
+    <Description>SimulaSharp — the meta-package for authoring hard-real-time simulations. Pulls in the Kernel runtime and the CodeGen analyzer/source-generator; reference this one package.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- NU5128: a package with dependencies but no lib/ref assets — expected and correct for a meta-package. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <!-- Dependency-only (no lib/ assembly) → no symbol package to produce. -->
+    <IncludeSymbols>false</IncludeSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!-- ProjectReferences become package dependencies (by PackageId + Version) when this is packed.
+       CodeGen's analyzer + <SimAssembly> targets must FLOW to the meta's consumer, so PrivateAssets="none"
+       overrides NuGet's default (which would emit exclude="Build,Analyzers" on the dependency). -->
+  <ItemGroup>
+    <ProjectReference Include="..\Kernel\Kernel.csproj" />
+    <ProjectReference Include="..\CodeGen\SimulaSharp.CodeGen.csproj" PrivateAssets="none" />
+  </ItemGroup>
+
+</Project>

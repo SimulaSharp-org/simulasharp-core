@@ -8,16 +8,22 @@
         <IsRoslynComponent>true</IsRoslynComponent>
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
         <IncludeBuildOutput>false</IncludeBuildOutput>
-        <!-- Analyzer package: the generator ships under analyzers/, not lib/, and carries no runtime deps. -->
+        <!-- Analyzer package: the generator ships under analyzers/, not lib/, and carries no runtime deps.
+             NOT marked DevelopmentDependency — that would stop the analyzer + <SimAssembly> support from
+             flowing transitively through the SimulaSharp meta-package to a consumer. -->
         <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
-        <DevelopmentDependency>true</DevelopmentDependency>
         <AssemblyName>SimulaSharp.CodeGen</AssemblyName>
         <RootNamespace>SimulaSharp.CodeGen</RootNamespace>
         <!-- RS2008: analyzer-release-tracking for the SIMxxx diagnostics; not packaging release notes.
-             1591: allow not-yet-documented public members (the docs API reference harvests these XML docs). -->
-        <NoWarn>$(NoWarn);RS2008;1591</NoWarn>
+             1591: allow not-yet-documented public members (the docs API reference harvests these XML docs).
+             NU5128: no lib/ assets (analyzer-only) is expected. -->
+        <NoWarn>$(NoWarn);RS2008;1591;NU5128</NoWarn>
         <!-- Emit XML docs so the docs site's API reference can harvest them. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <Description>The Roslyn analyzer/source-generator for SimulaSharp: turns annotated models + a YAML assembly into a strongly-typed simulator, with strict SIM0xx diagnostics. Pulled in transitively by the SimulaSharp meta-package.</Description>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <!-- Analyzer-only (no lib/ assembly) → no symbol package to produce. -->
+        <IncludeSymbols>false</IncludeSymbols>
     </PropertyGroup>
 
     <ItemGroup>
@@ -25,9 +31,12 @@
         <PackageReference Include="YamlDotNet" Version="13.7.1" GeneratePathProperty="true" PrivateAssets="all" />
     </ItemGroup>
 
-    <!-- Ship the <SimAssembly> item support so consumers auto-import it from the package. -->
+    <!-- Ship the <SimAssembly> item support. Under BOTH build/ (direct reference) and buildTransitive/
+         (flows through the SimulaSharp meta-package to the real consumer). Plus the README. -->
     <ItemGroup>
         <None Include="build\SimulaSharp.CodeGen.targets" Pack="true" PackagePath="build\" />
+        <None Include="build\SimulaSharp.CodeGen.targets" Pack="true" PackagePath="buildTransitive\" />
+        <None Include="README.md" Pack="true" PackagePath="" />
         <!-- Pack the generator assembly + its bundled YamlDotNet as the analyzer (IncludeBuildOutput=false keeps
              them out of lib/). NuGet auto-registers everything under analyzers/dotnet/cs as an analyzer. -->
         <None Include="$(OutputPath)\SimulaSharp.CodeGen.dll" Pack="true" PackagePath="analyzers\dotnet\cs" Visible="false" />

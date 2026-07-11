@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SAMPLE nuget.config for a project that CONSUMES SimulaSharp.
+
+  Copy this to your simulation project as `nuget.config` (or fold the "simulasharp" source into your
+  machine-wide NuGet config), and point it at wherever the SimulaSharp packages live — a folder feed
+  (as below), an internal NuGet server, GitHub Packages, etc. Then reference the one meta-package:
+
+      <PackageReference Include="SimulaSharp" Version="0.2.0" />
+
+  That brings the Kernel runtime and the CodeGen analyzer/source-generator (transitively), so you can
+  author models/services and declare a `<SimAssembly>` YAML that compiles into a strongly-typed simulator.
+
+  (This file is a sample and is intentionally NOT named `nuget.config`, so it does not affect this repo.)
+-->
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="simulasharp" value="C:\path\to\simulasharp\artifacts" />
+  </packageSources>
+</configuration>

@@ -1,0 +1,24 @@
+<Project>
+
+  <!-- Shared package metadata + versioning for every project in the repo. Only packable projects
+       (the libraries + the meta-package) actually produce a .nupkg; tests set IsPackable=false. -->
+  <PropertyGroup>
+    <Version>0.2.0</Version>
+    <Authors>Andreas Michelis</Authors>
+    <Company>Andreas Michelis</Company>
+    <Copyright>Copyright (c) 2026 Andreas Michelis</Copyright>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageTags>simulation;real-time;discrete-event;hardware-in-the-loop;actor;dotnet</PackageTags>
+
+    <!-- Reproducible builds + symbol packages for debugging consumers. -->
+    <Deterministic>true</Deterministic>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <!-- The MIT LICENSE ships inside every package. Guarded so non-packable projects skip it. -->
+  <ItemGroup Condition="'$(IsPackable)' != 'false'">
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="" Visible="false" />
+  </ItemGroup>
+
+</Project>
