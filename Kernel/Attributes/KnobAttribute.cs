@@ -80,39 +80,27 @@ public enum NumberKnobType
 }
 
 /// <summary>
-/// Decorates model members that represent integer values to be exposed as knobs in the UI.
+/// Decorates a model member that represents a <b>numeric</b> value to be exposed as a knob in the UI. One generic
+/// attribute covers every numeric type <typeparamref name="T"/> — there is no separate integer vs floating-point
+/// attribute. <see cref="Min"/>/<see cref="Max"/> are typed as <typeparamref name="T"/>, and precision
+/// (<see cref="DecimalPlaces"/>) simply carries through: it is a no-op the UI ignores when <typeparamref name="T"/>
+/// is an integer type, so the same attribute reads naturally for both <c>[NumberKnob&lt;int&gt;("Mode", Max = 3)]</c>
+/// and <c>[NumberKnob&lt;double&gt;("Vbus", Max = 32, DecimalPlaces = 2)]</c>.
 /// </summary>
+/// <typeparam name="T">The numeric CLR type of the member (e.g. <c>int</c>, <c>long</c>, <c>double</c>, <c>float</c>).</typeparam>
 /// <param name="label">The knob label.</param>
 [AttributeUsage(AttributeTargets.Property)]
-public class IntegerKnobAttribute(string label) : KnobAttribute(label)
+public class NumberKnobAttribute<T>(string label) : KnobAttribute(label)
 {
     /// <summary>How the knob is presented.</summary>
     public NumberKnobType KnobType { get; set; } = NumberKnobType.Input;
 
-    /// <summary>Minimum permitted value.</summary>
-    public long Min { get; set; } = long.MinValue;
+    /// <summary>Minimum permitted value (unbounded when unset).</summary>
+    public T Min { get; set; } = default!;
 
-    /// <summary>Maximum permitted value.</summary>
-    public long Max { get; set; } = long.MaxValue;
-}
+    /// <summary>Maximum permitted value (unbounded when unset).</summary>
+    public T Max { get; set; } = default!;
 
-/// <summary>
-/// Decorates model members to be represented as floating-point knobs in the UI.
-/// Supports options for input precision, range, and decimal formatting.
-/// </summary>
-/// <param name="label">The label for the knob.</param>
-[AttributeUsage(AttributeTargets.Property)]
-public class FloatKnobAttribute(string label) : KnobAttribute(label)
-{
-    /// <summary>How the knob is presented.</summary>
-    public NumberKnobType KnobType { get; set; } = NumberKnobType.Input;
-
-    /// <summary>Minimum permitted value.</summary>
-    public float Min { get; set; } = float.MinValue;
-
-    /// <summary>Maximum permitted value.</summary>
-    public float Max { get; set; } = float.MaxValue;
-
-    /// <summary>Number of decimal places shown/accepted.</summary>
+    /// <summary>Number of decimal places shown/accepted. A no-op for integer <typeparamref name="T"/>.</summary>
     public uint DecimalPlaces { get; set; } = 2;
 }

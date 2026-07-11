@@ -39,7 +39,7 @@ public sealed class PlottableGeneratorTests
         // generator must only reference the property, not re-declare its backing field.
         var r = GeneratorHarness.Run(new PlottableGenerator(),
             Model("""
-                [FloatKnob("Ratio", IsReadOnly = true)]
+                [NumberKnob<double>("Ratio", IsReadOnly = true)]
                 [Plottable("Ratio", Unit = "%")]
                 public partial double Ratio { get; set; }
                 """));

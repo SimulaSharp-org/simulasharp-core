@@ -13,8 +13,7 @@ namespace SimulaSharp.CodeGen;
 /// For every partial model with knob-decorated partial properties, implements them
 /// (volatile get; volatile set + change-notify) and builds a <c>Knob</c> binder
 /// per knob via an explicit <c>IKnobProvider.CollectKnobs</c> the simulator calls during
-/// discovery. v1 covers value knobs (Text/TickBox/Integer/Float); trigger knobs are
-/// deferred.
+/// discovery. v1 covers value knobs (Text/TickBox/Number&lt;T&gt;) plus trigger knobs.
 /// </summary>
 [Generator]
 public sealed class KnobGenerator : IIncrementalGenerator
@@ -58,7 +57,7 @@ public sealed class KnobGenerator : IIncrementalGenerator
                 case IPropertySymbol { IsPartialDefinition: true } p:
                 {
                     var attr = p.GetAttributes().FirstOrDefault(static a => IsKnobAttr(a.AttributeClass));
-                    string? kind = attr is null ? null : KindOf(attr.AttributeClass?.ToDisplayString());
+                    string? kind = attr is null ? null : KindOf(attr.AttributeClass);
                     if (attr is not null && kind is not null) knobs.Add((p, attr, kind));
                     break;
                 }
@@ -180,12 +179,13 @@ public sealed class KnobGenerator : IIncrementalGenerator
         return false;
     }
 
-    private static string? KindOf(string? attrName) => attrName switch
+    // Matches on the ORIGINAL definition so the generic NumberKnobAttribute<T> is recognized for any T
+    // (its constructed display string is NumberKnobAttribute<int>, <double>, … — the open form is <T>).
+    private static string? KindOf(INamedTypeSymbol? c) => c?.OriginalDefinition.ToDisplayString() switch
     {
         "SimulaSharp.Kernel.Attributes.TextKnobAttribute" => "Text",
         "SimulaSharp.Kernel.Attributes.TickBoxKnobAttribute" => "Bool",
-        "SimulaSharp.Kernel.Attributes.IntegerKnobAttribute" => "Number",
-        "SimulaSharp.Kernel.Attributes.FloatKnobAttribute" => "Number",
+        "SimulaSharp.Kernel.Attributes.NumberKnobAttribute<T>" => "Number",
         _ => null
     };
 

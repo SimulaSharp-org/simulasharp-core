@@ -12,9 +12,9 @@ public sealed class KnobGeneratorTests
         public partial class Widget : ModelBase
         {
             public Widget(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
-            [IntegerKnob("Speed", Min = 0, Max = 100)] public partial int Speed { get; set; }
+            [NumberKnob<int>("Speed", Min = 0, Max = 100)] public partial int Speed { get; set; }
             [TickBoxKnob("On")] public partial bool On { get; set; }
-            [FloatKnob("Ratio", IsReadOnly = true)] public partial double Ratio { get; set; }
+            [NumberKnob<double>("Ratio", IsReadOnly = true)] public partial double Ratio { get; set; }
             [TextKnob("Tag", MaxLength = 16)] public partial string Tag { get; set; }
             [TriggerKnob("Reset")] protected void Handle_Reset() { }
         }
@@ -68,6 +68,35 @@ public sealed class KnobGeneratorTests
             Assert.That(r.AllSource, Does.Contain("public void Reset()"));
             Assert.That(r.AllSource, Does.Contain("Handle_Reset()"));
             Assert.That(r.AllSource, Does.Contain("KnobKind.Trigger"));
+        });
+    }
+
+    [Test]
+    public void A_generic_NumberKnob_carries_bounds_and_decimal_places()
+    {
+        // The single generic attribute serves both integer and floating-point knobs; DecimalPlaces is meaningful
+        // for a double and simply carries through (a no-op the UI ignores for integer T).
+        const string src = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public partial class Gauge : ModelBase
+            {
+                public Gauge(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+                [NumberKnob<double>("Vbus", Max = 32, DecimalPlaces = 3)] public partial double Vbus { get; set; }
+                [NumberKnob<int>("Mode", Min = 0, Max = 3)] public partial int Mode { get; set; }
+            }
+            """;
+        var r = GeneratorHarness.Run(new KnobGenerator(), src);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.AllSource, Does.Contain("KnobKind.Number"));
+            Assert.That(r.AllSource, Does.Contain("Max = 32"));
+            Assert.That(r.AllSource, Does.Contain("DecimalPlaces = 3"));
+            Assert.That(r.AllSource, Does.Contain("Min = 0"));
+            Assert.That(r.AllSource, Does.Contain("Max = 3"));
         });
     }
 
