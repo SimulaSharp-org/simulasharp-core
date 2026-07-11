@@ -26,6 +26,8 @@ namespace SimulaSharp.CodeGen;
 [Generator]
 public sealed class SimulatorGenerator : IIncrementalGenerator
 {
+    private static readonly SymbolDisplayFormat Fq = SymbolDisplayFormat.FullyQualifiedFormat;
+
     /// <inheritdoc/>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -81,7 +83,11 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         foreach (var d in validator.Diagnostics) spc.ReportDiagnostic(d);
         if (validator.HasErrors) return;   // don't emit on error — avoids cascading compile errors
 
-        var ctx = new EmitCtx();
+        var ctx = new EmitCtx
+        {
+            Compilation = compilation,
+            ContainsAttr = compilation.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ContainsAttribute`1"),
+        };
         var init = new StringBuilder();
 
         // 1. Services. A clock-ungated (loosely-coupled) service registers through a different
@@ -150,29 +156,43 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         spc.AddSource($"{name}Simulator.g.cs", Text(sb.ToString()));
     }
 
-    /// <summary>Emits construction + config + containment for a model node; returns its var. Records deps.</summary>
+    /// <summary>
+    /// Emits construction + config + containment for a model node <b>bottom-up</b>; returns its var. Each
+    /// container's children are constructed first, collected into a non-generic <c>ContainerFactory</c>, then
+    /// frozen via <c>Build&lt;T&gt;()</c> and handed to the parent through its <c>init</c>-only accessor — so a
+    /// child never needs the not-yet-constructed parent. Records service deps and references for later passes.
+    /// </summary>
     private static string EmitModel(StringBuilder sb, ModelNode node, string siteVar, string path, EmitCtx ctx)
     {
         string fullPath = path + "." + node.Name;
+
+        // Containment: each entry is { <containerName>: [children] }. Build every container before the parent.
+        var inits = new List<string>();
+        foreach (var entry in node.Models ?? [])
+        foreach (var kv in entry)
+        {
+            string f = ctx.NextVar();
+            sb.Append("        var ").Append(f).AppendLine(" = new global::SimulaSharp.Kernel.Primitives.ContainerFactory();");
+            foreach (var child in kv.Value ?? [])
+            {
+                string childVar = EmitModel(sb, child, siteVar, fullPath, ctx);
+                sb.Append("        ").Append(f).Append(".Add(").Append(childVar).AppendLine(");");
+            }
+            inits.Add(kv.Key + " = " + f + ".Build<" + ctx.ContainerElementType(node.Type, kv.Key) + ">()");
+        }
+
         string v = ctx.NextVar();
         ctx.ModelsByPath[fullPath] = v;
         ctx.ModelVars.Add(v);
 
         sb.Append("        var ").Append(v).Append(" = Register(new global::").Append(node.Type)
-            .Append("(Clock, ").Append(siteVar).Append(", CreateLogger(").Append(Str(fullPath)).AppendLine(")));");
+            .Append("(Clock, ").Append(siteVar).Append(", CreateLogger(").Append(Str(fullPath)).Append("))");
+        if (inits.Count > 0) sb.Append(" { ").Append(string.Join(", ", inits)).Append(" }");
+        sb.AppendLine(");");
         EmitConfig(sb, v, node.Config);
         sb.Append("        CollectKnobsFrom(").Append(v).Append(", ").Append(Str(fullPath)).AppendLine(");");
         sb.Append("        CollectPlottablesFrom(").Append(v).Append(", ").Append(Str(fullPath)).AppendLine(");");
         sb.Append("        CollectParametersFrom(").Append(v).Append(", ").Append(Str(fullPath)).AppendLine(");");
-
-        // Containment: each entry is { <containerFieldName>: [children] }
-        foreach (var entry in node.Models ?? [])
-        foreach (var kv in entry)
-        foreach (var child in kv.Value ?? [])
-        {
-            string childVar = EmitModel(sb, child, siteVar, fullPath, ctx);
-            sb.Append("        ").Append(v).Append('.').Append(kv.Key).Append(".Add(").Append(childVar).AppendLine(");");
-        }
 
         // Deps: each entry is { <member>: serviceName } — bound in a later pass.
         foreach (var entry in node.Deps ?? [])
@@ -230,15 +250,16 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor UnknownType = D("SIM004", "Unknown type", "Type '{0}' for instance '{1}' could not be found");
     private static readonly DiagnosticDescriptor WrongKind = D("SIM005", "Wrong component kind", "Type '{0}' for '{1}' does not implement {2}");
     private static readonly DiagnosticDescriptor MissingCtor = D("SIM006", "Missing constructor", "Type '{0}' lacks the required constructor {1}");
-    private static readonly DiagnosticDescriptor BadContainer = D("SIM007", "Invalid container", "Container field '{0}' was not found on '{1}' or is not a Container<T>");
-    private static readonly DiagnosticDescriptor ContainerMismatch = D("SIM008", "Container type mismatch", "Contained type '{0}' is not assignable to container '{1}' element type '{2}'");
-    private static readonly DiagnosticDescriptor BadReference = D("SIM009", "Invalid reference", "Reference field '{0}' was not found on '{1}' or is not a Reference<T>");
-    private static readonly DiagnosticDescriptor UnresolvedRef = D("SIM010", "Unresolved reference", "Reference field '{0}' targets unknown instance '{1}'");
-    private static readonly DiagnosticDescriptor RefMismatch = D("SIM011", "Reference type mismatch", "Referenced instance '{0}' is not assignable to reference '{1}' element type '{2}'");
-    private static readonly DiagnosticDescriptor BadServiceRef = D("SIM012", "Invalid dependency", "Dependency member '{0}' was not found on '{1}' or is not [ServiceRef]");
-    private static readonly DiagnosticDescriptor UnknownService = D("SIM013", "Unknown service", "Dependency '{0}' names unknown service '{1}'");
-    private static readonly DiagnosticDescriptor ServiceMismatch = D("SIM014", "Service type mismatch", "Service '{0}' is not assignable to dependency member '{1}'");
-    private static readonly DiagnosticDescriptor UnknownConfigKey = D("SIM015", "Unknown config key", "Config key '{0}' has no matching [Parameter] member on '{1}'", DiagnosticSeverity.Warning);
+    private static readonly DiagnosticDescriptor NoContainer = D("SIM007", "Unknown container", "The model '{0}' does not have a SubModel container named '{1}'");
+    private static readonly DiagnosticDescriptor ContainerMismatch = D("SIM008", "Container type mismatch", "The Model '{0}' does not implement/inherit-from '{1}'");
+    private static readonly DiagnosticDescriptor NotAModel = D("SIM009", "Not a model", "'{0}' is not a model (does not implement IModel)");
+    private static readonly DiagnosticDescriptor BadReference = D("SIM010", "Invalid reference", "Reference field '{0}' was not found on '{1}' or is not a Reference<T>");
+    private static readonly DiagnosticDescriptor UnresolvedRef = D("SIM011", "Unresolved reference", "Reference field '{0}' targets unknown instance '{1}'");
+    private static readonly DiagnosticDescriptor RefMismatch = D("SIM012", "Reference type mismatch", "Referenced instance '{0}' is not assignable to reference '{1}' element type '{2}'");
+    private static readonly DiagnosticDescriptor BadServiceRef = D("SIM013", "Invalid dependency", "Dependency member '{0}' was not found on '{1}' or is not [ServiceRef]");
+    private static readonly DiagnosticDescriptor UnknownService = D("SIM014", "Unknown service", "Dependency '{0}' names unknown service '{1}'");
+    private static readonly DiagnosticDescriptor ServiceMismatch = D("SIM015", "Service type mismatch", "Service '{0}' is not assignable to dependency member '{1}'");
+    private static readonly DiagnosticDescriptor UnknownConfigKey = D("SIM016", "Unknown config key", "Config key '{0}' has no matching [Parameter] member on '{1}'", DiagnosticSeverity.Warning);
 
     // ── Validator ───────────────────────────────────────────────────────────────
     private sealed class Validator
@@ -248,7 +269,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public readonly List<Diagnostic> Diagnostics = new();
         public bool HasErrors { get; private set; }
 
-        private readonly INamedTypeSymbol? _iModel, _iService, _container, _reference, _configAttr, _serviceRefAttr, _iClock, _iScheduler, _iLogger;
+        private readonly INamedTypeSymbol? _iModel, _iService, _containsAttr, _reference, _configAttr, _serviceRefAttr, _iClock, _iScheduler, _iLogger;
 
         public Validator(Compilation c, Location loc)
         {
@@ -256,7 +277,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             _loc = loc;
             _iModel = c.GetTypeByMetadataName("SimulaSharp.Kernel.Model.IModel");
             _iService = c.GetTypeByMetadataName("SimulaSharp.Kernel.Model.IService");
-            _container = c.GetTypeByMetadataName("SimulaSharp.Kernel.Primitives.Container`1");
+            _containsAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ContainsAttribute`1");
             _reference = c.GetTypeByMetadataName("SimulaSharp.Kernel.Primitives.Reference`1");
             _configAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ParameterAttribute");
             _serviceRefAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ServiceRefAttribute");
@@ -294,7 +315,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             var pendingRefs = new List<(string Field, ITypeSymbol? Elem, string Path)>();
             foreach (var site in sim.Sites ?? [])
                 foreach (var root in site.Models ?? [])
-                    WalkModel(root, simName, services, paths, pendingRefs);
+                    WalkModel(root, simName, services, paths, pendingRefs, containedPath: null);
 
             foreach (var (field, elem, target) in pendingRefs)
             {
@@ -303,14 +324,14 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             }
         }
 
-        private void WalkModel(ModelNode node, string prefix, Dictionary<string, INamedTypeSymbol> services,
-            Dictionary<string, INamedTypeSymbol> paths, List<(string, ITypeSymbol?, string)> pendingRefs)
+        private INamedTypeSymbol? WalkModel(ModelNode node, string prefix, Dictionary<string, INamedTypeSymbol> services,
+            Dictionary<string, INamedTypeSymbol> paths, List<(string, ITypeSymbol?, string)> pendingRefs, string? containedPath)
         {
             string full = prefix + "." + node.Name;
             if (paths.ContainsKey(full)) Report(DuplicatePath, full);
 
-            var type = ResolveType(node.Type, node.Name, service: false);
-            if (type is null) return;
+            var type = ResolveType(node.Type, node.Name, service: false, containedPath);
+            if (type is null) return null;
             paths[full] = type;
             CheckConfig(type, node.Config);
 
@@ -318,17 +339,23 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                 foreach (var kv in entry)
                     CheckDep(type, kv.Key, kv.Value, services);
 
+            // Containment: each entry is { <containerName>: [children] }. The container is declared by a
+            // [Contains<T>("containerName")] attribute on the model (not a field); its element type is T.
             foreach (var entry in node.Models ?? [])
                 foreach (var kv in entry)
                 {
-                    var elem = GenericElement(MemberType(FindMember(type, kv.Key)), _container);
-                    if (elem is null) Report(BadContainer, kv.Key, type.Name);
+                    var elem = ContainerElement(type, kv.Key);
+                    if (elem is null) Report(NoContainer, type.Name, kv.Key);
                     foreach (var child in kv.Value ?? [])
                     {
-                        var childType = ResolveType(child.Type, child.Name, service: false);
-                        if (elem is not null && childType is not null && !Assignable(childType, elem))
-                            Report(ContainerMismatch, childType.ToDisplayString(), kv.Key, elem.ToDisplayString());
-                        WalkModel(child, full, services, paths, pendingRefs);
+                        string childFull = full + "." + child.Name;
+                        var childType = WalkModel(child, full, services, paths, pendingRefs, childFull);
+                        // Assignability (SIM008) only matters once we know the child IS a model — a non-model
+                        // child already reported SIM009 in its own WalkModel, so don't pile a second error on.
+                        if (elem is not null && childType is not null
+                            && childType.AllInterfaces.Any(i => SymbolEqualityComparer.Default.Equals(i, _iModel))
+                            && !Assignable(childType, elem))
+                            Report(ContainerMismatch, childFull, elem.ToDisplayString());
                     }
                 }
 
@@ -340,6 +367,21 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                     foreach (var p in kv.Value ?? [])
                         pendingRefs.Add((kv.Key, elem, p));
                 }
+
+            return type;
+        }
+
+        /// <summary>The element type <c>T</c> of the <c>[Contains&lt;T&gt;("name")]</c> container declared on
+        /// <paramref name="type"/> (walking base types), or null when the model declares no such container.</summary>
+        private ITypeSymbol? ContainerElement(INamedTypeSymbol type, string name)
+        {
+            for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
+                foreach (var a in t.GetAttributes())
+                    if (SymbolEqualityComparer.Default.Equals(a.AttributeClass?.OriginalDefinition, _containsAttr)
+                        && a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is string n && n == name
+                        && a.AttributeClass is { TypeArguments.Length: 1 } ac)
+                        return ac.TypeArguments[0];
+            return null;
         }
 
         /// <summary>
@@ -356,13 +398,18 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             else if (MemberType(m) is { } mt && !Assignable(svcType, mt)) Report(ServiceMismatch, targetService, member);
         }
 
-        private INamedTypeSymbol? ResolveType(string typeName, string instance, bool service)
+        private INamedTypeSymbol? ResolveType(string typeName, string instance, bool service, string? containedPath = null)
         {
             var t = _c.GetTypeByMetadataName(typeName);
             if (t is null) { Report(UnknownType, typeName, instance); return null; }
             var iface = service ? _iService : _iModel;
             if (iface is not null && !t.AllInterfaces.Any(i => SymbolEqualityComparer.Default.Equals(i, iface)))
-                Report(WrongKind, typeName, instance, service ? "IService" : "IModel");
+            {
+                // A contained child that isn't a model gets the containment-specific SIM009 (with its full
+                // path); everything else — root models and services — gets the general SIM005.
+                if (containedPath is not null) Report(NotAModel, containedPath);
+                else Report(WrongKind, typeName, instance, service ? "IService" : "IModel");
+            }
             if (!HasCtor(t, service))
                 Report(MissingCtor, typeName, service ? "(IClock, ILogger)" : "(IClock, IScheduler, ILogger)");
             return t;
@@ -436,6 +483,23 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public readonly List<string> ModelVars = new();
         public readonly List<(string ModelVar, string Member, string ServiceName)> Deps = new();
         public readonly List<(string ModelVar, string Field, List<string> Paths)> Refs = new();
+
+        public Compilation Compilation = null!;
+        public INamedTypeSymbol? ContainsAttr;
+
+        /// <summary>The fully-qualified element type <c>T</c> of the <c>[Contains&lt;T&gt;("name")]</c> container
+        /// on <paramref name="parentType"/>, for emitting <c>Build&lt;T&gt;()</c>. Validation has already
+        /// guaranteed the attribute exists; falls back to <c>IModel</c> defensively.</summary>
+        public string ContainerElementType(string parentType, string name)
+        {
+            for (INamedTypeSymbol? t = Compilation.GetTypeByMetadataName(parentType); t is not null; t = t.BaseType)
+                foreach (var a in t.GetAttributes())
+                    if (SymbolEqualityComparer.Default.Equals(a.AttributeClass?.OriginalDefinition, ContainsAttr)
+                        && a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is string n && n == name
+                        && a.AttributeClass is { TypeArguments.Length: 1 } ac)
+                        return ac.TypeArguments[0].ToDisplayString(Fq);
+            return "global::SimulaSharp.Kernel.Model.IModel";
+        }
     }
 
     // ── Assembly descriptor (YamlDotNet target) ─────────────────────────────────

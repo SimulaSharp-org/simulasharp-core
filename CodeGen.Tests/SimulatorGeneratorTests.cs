@@ -1,7 +1,7 @@
 namespace SimulaSharp.CodeGen.Tests;
 
 /// <summary>
-/// Tests <see cref="SimulatorGenerator"/> emission and its strict SIM001–SIM015 validation.
+/// Tests <see cref="SimulatorGenerator"/> emission and its strict SIM001–SIM016 validation.
 /// Each diagnostic test feeds a source + assembly YAML crafted to trip exactly one rule.
 /// </summary>
 [TestFixture]
@@ -15,10 +15,10 @@ public sealed class SimulatorGeneratorTests
         using SimulaSharp.Kernel.Primitives;
         using SimulaSharp.Kernel.Services;
         namespace Demo;
+        [Contains<Unit>("Units")]
         public partial class Plant : ModelBase
         {
             public Plant(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
-            public Container<Unit> Units { get; } = new();
             [ServiceRef] public Svc Dep { get; set; } = null!;
             [Parameter] public int Capacity { get; set; }
         }
@@ -71,7 +71,10 @@ public sealed class SimulatorGeneratorTests
             Assert.That(r.AllSource, Does.Contain("__ApplyParameters"));
             Assert.That(r.AllSource, Does.Contain("CollectKnobsFrom"));
             Assert.That(r.AllSource, Does.Contain("CollectPlottablesFrom"));
-            Assert.That(r.AllSource, Does.Contain(".Units.Add("));
+            // Containment is built bottom-up through a ContainerFactory, then frozen into the parent's init.
+            Assert.That(r.AllSource, Does.Contain("new global::SimulaSharp.Kernel.Primitives.ContainerFactory()"));
+            Assert.That(r.AllSource, Does.Contain("Units = "));
+            Assert.That(r.AllSource, Does.Contain(".Build<global::Demo.Unit>()"));
             Assert.That(r.AllSource, Does.Contain("WireReferences"));
         });
     }
@@ -149,7 +152,7 @@ public sealed class SimulatorGeneratorTests
     }
 
     [Test]
-    public void A_service_dep_naming_an_unknown_service_reports_SIM013()
+    public void A_service_dep_naming_an_unknown_service_reports_SIM014()
     {
         const string world = World + """
 
@@ -169,7 +172,7 @@ public sealed class SimulatorGeneratorTests
                     - Other: Nope
               Sites: []
             """, world);
-        Assert.That(r.HasDiagnostic("SIM013"), Is.True);
+        Assert.That(r.HasDiagnostic("SIM014"), Is.True);
     }
 
     [Test]
@@ -231,7 +234,7 @@ public sealed class SimulatorGeneratorTests
     }
 
     [Test]
-    public void SIM015_warns_on_an_unknown_config_key()
+    public void SIM016_warns_on_an_unknown_config_key()
     {
         var r = Run("""
             Simulator:
@@ -244,7 +247,7 @@ public sealed class SimulatorGeneratorTests
                       Config:
                         NoSuchKey: "1"
             """);
-        Assert.That(r.HasDiagnostic("SIM015"), Is.True);
+        Assert.That(r.HasDiagnostic("SIM016"), Is.True);
     }
 
     [Test]
@@ -259,5 +262,96 @@ public sealed class SimulatorGeneratorTests
                     - { Name: Root, Type: Demo.DoesNotExist }
             """);
         Assert.That(r.Sources, Is.Empty, "a simulator was emitted despite an error");
+    }
+
+    [Test]
+    public void SIM007_reports_an_unknown_container_name()
+    {
+        // Plant declares [Contains<Unit>("Units")] — a container named "Nope" does not exist.
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: Root
+                      Type: Demo.Plant
+                      Models:
+                        - Nope:
+                            - { Name: C, Type: Demo.Unit }
+            """);
+        Assert.That(r.HasDiagnostic("SIM007"), Is.True);
+    }
+
+    [Test]
+    public void SIM008_reports_a_contained_type_not_assignable_to_the_container()
+    {
+        // Gadget is a model, but not a Unit — so it cannot go into Plant's Container<Unit>.
+        const string world = World + """
+
+            public sealed class Gadget : ModelBase
+            {
+                public Gadget(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+            }
+            """;
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: Root
+                      Type: Demo.Plant
+                      Models:
+                        - Units:
+                            - { Name: C, Type: Demo.Gadget }
+            """, world);
+        Assert.That(r.HasDiagnostic("SIM008"), Is.True);
+    }
+
+    [Test]
+    public void SIM009_reports_a_contained_child_that_is_not_a_model()
+    {
+        // Svc is a service (IService, not IModel) — invalid as a contained child.
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: Root
+                      Type: Demo.Plant
+                      Models:
+                        - Units:
+                            - { Name: C, Type: Demo.Svc }
+            """);
+        Assert.That(r.HasDiagnostic("SIM009"), Is.True);
+    }
+
+    [Test]
+    public void Contains_attribute_emits_an_init_only_container_accessor()
+    {
+        const string source = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public sealed class Cog : ModelBase
+            {
+                public Cog(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+            }
+            [Contains<Cog>("Cogs")]
+            public partial class Machine : ModelBase
+            {
+                public Machine(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+            }
+            """;
+        var r = GeneratorHarness.Run(new ContainmentGenerator(), source);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.AllSource, Does.Contain("public global::SimulaSharp.Kernel.Primitives.Container<global::Demo.Cog> Cogs { get; init; }"));
+            Assert.That(r.AllSource, Does.Contain("Container<global::Demo.Cog>.Empty"));
+        });
     }
 }

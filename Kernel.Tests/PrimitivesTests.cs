@@ -46,13 +46,14 @@ public sealed class SimYieldTests
 public sealed class AssociationTests
 {
     [Test]
-    public void Container_adds_indexes_counts_and_enumerates()
+    public void ContainerFactory_builds_a_frozen_indexable_container()
     {
         var a = new DummyModel();
         var b = new DummyModel();
-        var c = new Container<DummyModel> { };
-        c.Add(a);
-        c.Add(b);
+        var factory = new ContainerFactory();
+        factory.Add(a);
+        factory.Add(b);
+        var c = factory.Build<DummyModel>();
 
         Assert.Multiple(() =>
         {
@@ -62,6 +63,9 @@ public sealed class AssociationTests
             Assert.That(c.ToArray(), Is.EqualTo(new[] { a, b }));
         });
     }
+
+    [Test]
+    public void Container_Empty_is_empty() => Assert.That(Container<DummyModel>.Empty, Is.Empty);
 
     [Test]
     public void ReferenceAccessor_From_wraps_each_referenced_model()
