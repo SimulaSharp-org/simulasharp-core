@@ -51,38 +51,71 @@ public sealed class RefGeneratorTests
             Assert.That(r.AllSource, Does.Not.Contain("GetScheduler("));
         });
     }
+
+    [Test]
+    public void An_interface_reference_target_mints_a_companion_interface_its_impls_Ref_implements()
+    {
+        // IPowerSource is a framework-pure interface used as a [References<IPowerSource>] target; Panel implements
+        // it. The companion IPowerSourceRef must be minted, and PanelRef must implement it.
+        const string source = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public interface IPowerSource { double AvailablePowerW { get; } }
+            public sealed class Panel : ModelBase, IPowerSource
+            {
+                public Panel(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+                public double AvailablePowerW => 0;
+            }
+            [References<IPowerSource>("Sources")]
+            public partial class Grid : ModelBase
+            {
+                public Grid(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+            }
+            """;
+        var r = GeneratorHarness.Run(new RefGenerator(), source);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.AllSource, Does.Contain("interface IPowerSourceRef : global::SimulaSharp.Kernel.Model.IModelRef"));
+            Assert.That(r.AllSource, Does.Contain("GetAvailablePowerW(global::SimulaSharp.Kernel.Services.IScheduler callerScheduler);"));
+            Assert.That(r.AllSource, Does.Contain("sealed class PanelRef : global::SimulaSharp.Kernel.Model.IModelRef, global::Demo.IPowerSourceRef"));
+        });
+    }
 }
 
 [TestFixture]
-public sealed class ReferenceAccessorGeneratorTests
+public sealed class ReferenceGeneratorTests
 {
     private const string Model = """
+        using SimulaSharp.Kernel.Attributes;
         using SimulaSharp.Kernel.Logging;
         using SimulaSharp.Kernel.Model;
-        using SimulaSharp.Kernel.Primitives;
         using SimulaSharp.Kernel.Services;
         namespace Demo;
         public sealed class Tracker : ModelBase
         {
             public Tracker(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
         }
+        [References<Tracker>("Peers")]
         public partial class Hub : ModelBase
         {
             public Hub(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
-            public Reference<Tracker> Peers { get; } = new();
         }
         """;
 
     [Test]
-    public void Emits_an_accessor_field_and_wiring_per_reference()
+    public void Emits_a_readonly_IReference_accessor_and_a_wire_seam_per_reference()
     {
-        var r = GeneratorHarness.Run(new ReferenceAccessorGenerator(), Model);
+        var r = GeneratorHarness.Run(new ReferenceGenerator(), Model);
         Assert.Multiple(() =>
         {
             Assert.That(r.AllSource, Does.Contain("global::SimulaSharp.Kernel.Model.IReferenceWiring"));
-            Assert.That(r.AllSource, Does.Contain("ReferenceAccessor<global::Demo.TrackerRef> _Peers"));
-            Assert.That(r.AllSource, Does.Contain("WireReferences()"));
-            Assert.That(r.AllSource, Does.Contain("ReferenceAccessor.From(Peers, static __m => new global::Demo.TrackerRef(__m))"));
+            Assert.That(r.AllSource, Does.Contain("global::SimulaSharp.Kernel.Primitives.IReference<global::Demo.TrackerRef> Peers"));
+            Assert.That(r.AllSource, Does.Contain("new global::SimulaSharp.Kernel.Primitives.FillableReference<global::Demo.TrackerRef>()"));
+            Assert.That(r.AllSource, Does.Contain(".WireReference(string member, global::SimulaSharp.Kernel.Primitives.RefCollection refs)"));
+            Assert.That(r.AllSource, Does.Contain("(global::Demo.TrackerRef)__r"));
         });
     }
 }

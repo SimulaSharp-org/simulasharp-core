@@ -22,10 +22,10 @@ public sealed class SimulatorGeneratorTests
             [ServiceRef] public Svc Dep { get; set; } = null!;
             [Parameter] public int Capacity { get; set; }
         }
+        [References<Unit>("Peers")]
         public partial class Unit : ModelBase
         {
             public Unit(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
-            public Reference<Unit> Peers { get; } = new();
         }
         public sealed class Svc : ServiceBase
         {
@@ -55,6 +55,10 @@ public sealed class SimulatorGeneratorTests
                     - Units:
                         - Name: Child
                           Type: Demo.Unit
+                          Refs:
+                            - Peers: [ Widget.Root.Child2 ]
+                        - Name: Child2
+                          Type: Demo.Unit
         """;
 
     [Test]
@@ -75,7 +79,10 @@ public sealed class SimulatorGeneratorTests
             Assert.That(r.AllSource, Does.Contain("new global::SimulaSharp.Kernel.Primitives.ContainerFactory()"));
             Assert.That(r.AllSource, Does.Contain("Units = "));
             Assert.That(r.AllSource, Does.Contain(".Build<global::Demo.Unit>()"));
-            Assert.That(r.AllSource, Does.Contain("WireReferences"));
+            // References are pre-wrapped into a RefCollection and handed to the referrer's WireReference seam.
+            Assert.That(r.AllSource, Does.Contain("new global::SimulaSharp.Kernel.Primitives.RefCollection()"));
+            Assert.That(r.AllSource, Does.Contain("new global::Demo.UnitRef("));
+            Assert.That(r.AllSource, Does.Contain(".WireReference(\"Peers\","));
         });
     }
 
@@ -326,6 +333,61 @@ public sealed class SimulatorGeneratorTests
                             - { Name: C, Type: Demo.Svc }
             """);
         Assert.That(r.HasDiagnostic("SIM009"), Is.True);
+    }
+
+    [Test]
+    public void SIM010_reports_an_unknown_reference_name()
+    {
+        // Unit declares [References<Unit>("Peers")] — a reference named "Nope" does not exist.
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: Root
+                      Type: Demo.Unit
+                      Refs:
+                        - Nope: [ W.Root ]
+            """);
+        Assert.That(r.HasDiagnostic("SIM010"), Is.True);
+    }
+
+    [Test]
+    public void SIM011_reports_an_unresolved_reference_path()
+    {
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: Root
+                      Type: Demo.Unit
+                      Refs:
+                        - Peers: [ W.DoesNotExist ]
+            """);
+        Assert.That(r.HasDiagnostic("SIM011"), Is.True);
+    }
+
+    [Test]
+    public void SIM012_reports_a_referenced_instance_not_assignable_to_the_reference()
+    {
+        // Peers is [References<Unit>]; a Plant is a model but not a Unit.
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: U
+                      Type: Demo.Unit
+                      Refs:
+                        - Peers: [ W.P ]
+                    - Name: P
+                      Type: Demo.Plant
+            """);
+        Assert.That(r.HasDiagnostic("SIM012"), Is.True);
     }
 
     [Test]

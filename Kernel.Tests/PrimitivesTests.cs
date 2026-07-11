@@ -68,31 +68,28 @@ public sealed class AssociationTests
     public void Container_Empty_is_empty() => Assert.That(Container<DummyModel>.Empty, Is.Empty);
 
     [Test]
-    public void ReferenceAccessor_From_wraps_each_referenced_model()
+    public void FillableReference_fills_and_reads_as_a_readonly_IReference()
     {
         var m1 = new DummyModel();
         var m2 = new DummyModel();
-        var reference = new Reference<DummyModel>();
-        reference.Add(m1);
-        reference.Add(m2);
+        var fillable = new FillableReference<DummyModelRef>();
+        fillable.Add(new DummyModelRef(m1));
+        fillable.Add(new DummyModelRef(m2));
 
-        var accessor = ReferenceAccessor.From(reference, m => new DummyModelRef(m));
+        IReference<DummyModelRef> reference = fillable;   // the model holds only the read-only face
 
         Assert.Multiple(() =>
         {
-            Assert.That(accessor.Count, Is.EqualTo(2));
-            Assert.That(accessor[0].Model, Is.SameAs(m1));
-            Assert.That(accessor[1].Model, Is.SameAs(m2));
-            Assert.That(accessor.Select(r => r.Model), Is.EqualTo(new[] { m1, m2 }));
+            Assert.That(reference.Count, Is.EqualTo(2));
+            Assert.That(reference[0].Model, Is.SameAs(m1));
+            Assert.That(reference[1].Model, Is.SameAs(m2));
+            Assert.That(reference.Select(r => r.Model), Is.EqualTo(new[] { m1, m2 }));
         });
     }
 
     [Test]
-    public void ReferenceAccessor_over_an_empty_reference_is_empty()
-    {
-        var accessor = ReferenceAccessor.From(new Reference<DummyModel>(), m => new DummyModelRef(m));
-        Assert.That(accessor.Count, Is.EqualTo(0));
-    }
+    public void An_unfilled_FillableReference_is_empty() =>
+        Assert.That(new FillableReference<DummyModelRef>(), Is.Empty);
 }
 
 [TestFixture]

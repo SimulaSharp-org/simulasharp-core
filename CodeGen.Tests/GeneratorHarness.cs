@@ -102,4 +102,38 @@ internal static class GeneratorHarness
         var diagnostics = run.Results.SelectMany(r => r.Diagnostics).ToList();
         return new GenResult(sources, diagnostics);
     }
+
+    /// <summary>
+    /// Runs the <b>whole</b> generator set (simulator + refs + references + containment + knobs/plottables/
+    /// parameters/services) over <paramref name="source"/> and its assembly YAML, then <b>compiles the result</b>
+    /// (original + all generated trees) and returns the compile-time <b>error</b> diagnostics. This is the only
+    /// harness that verifies the generated code actually compiles together — inspection-only runs cannot catch, e.g.,
+    /// a generated cast or field type that is wrong once every generator's output is combined.
+    /// </summary>
+    public static IReadOnlyList<Diagnostic> CompileWithAllGenerators(string source, string simAssemblyYaml)
+    {
+        var tree = CSharpSyntaxTree.ParseText(source);
+        var compilation = CSharpCompilation.Create(
+            "PipelineAssembly",
+            [tree],
+            References,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        var generators = new IIncrementalGenerator[]
+        {
+            new SimulatorGenerator(), new RefGenerator(), new ReferenceGenerator(), new ContainmentGenerator(),
+            new KnobGenerator(), new PlottableGenerator(), new ParameterGenerator(), new ServiceGenerator(),
+        };
+
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            generators.Select(g => g.AsSourceGenerator()),
+            additionalTexts: [new InMemoryAdditionalText("Test.simassembly.yaml", simAssemblyYaml)],
+            parseOptions: null,
+            optionsProvider: new SimAssemblyOptionsProvider());
+
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var updated, out _);
+        return updated.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .ToList();
+    }
 }
