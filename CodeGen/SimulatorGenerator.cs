@@ -542,7 +542,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
     private sealed class SiteDesc
     {
         public string Name { get; set; } = "";
-        public int MaxEvents { get; set; } = 1024;
+        public int MaxEvents { get; set; } = 64;
         public List<ModelNode>? Models { get; set; }
     }
 

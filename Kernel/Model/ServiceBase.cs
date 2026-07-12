@@ -22,7 +22,7 @@ public abstract class ServiceBase : IService
     /// <param name="logger">This service's component-scoped logger.</param>
     /// <param name="name">Diagnostic name for the service's SimSite.</param>
     /// <param name="maxEvents">Capacity of the service site's event queue.</param>
-    protected ServiceBase(IClock timeKeeper, ILogger logger, string name, int maxEvents = 1024)
+    protected ServiceBase(IClock timeKeeper, ILogger logger, string name, int maxEvents = 64)
     {
         TimeKeeper = timeKeeper;
         Logger = logger;

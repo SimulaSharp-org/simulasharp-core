@@ -95,7 +95,7 @@ public abstract class SimulatorBase : ISimulator
     // ── Building blocks for the generated subclass ──────────────────────────────
 
     /// <summary>Creates and registers a root SimSite (one per assembly <c>Sites[]</c> entry).</summary>
-    protected SimSite CreateSite(string name, int maxEvents = 1024)
+    protected SimSite CreateSite(string name, int maxEvents = 64)
     {
         var site = new SimSite(name, _clock, maxEvents);
         _sites.Add(site);

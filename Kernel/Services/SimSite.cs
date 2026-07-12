@@ -69,7 +69,7 @@ public sealed class SimSite : IScheduler, IDispatcherSite, IHorizonWaiter
     /// <param name="name">Diagnostic name.</param>
     /// <param name="clock">The shared simulation clock.</param>
     /// <param name="maxEvents">Capacity of the site's event queue.</param>
-    public SimSite(string name, IClock clock, int maxEvents = 1024)
+    public SimSite(string name, IClock clock, int maxEvents = 64)
     {
         _name = name;
         _clock = clock;
