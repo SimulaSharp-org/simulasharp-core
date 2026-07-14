@@ -121,8 +121,8 @@ internal static class GeneratorHarness
 
         var generators = new IIncrementalGenerator[]
         {
-            new SimulatorGenerator(), new RefGenerator(), new ReferenceGenerator(), new ContainmentGenerator(),
-            new KnobGenerator(), new PlottableGenerator(), new ParameterGenerator(), new ServiceGenerator(),
+            new SimulatorGenerator(), new RefGenerator(), new ReferenceGenerator(), new LocalReferenceGenerator(),
+            new ContainmentGenerator(), new KnobGenerator(), new PlottableGenerator(), new ParameterGenerator(), new ServiceGenerator(),
         };
 
         GeneratorDriver driver = CSharpGeneratorDriver.Create(

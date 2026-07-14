@@ -13,7 +13,8 @@ public sealed class PipelineCompileTests
     public void A_cross_site_interface_reference_compiles_end_to_end()
     {
         // Grid on site A references, through a framework-pure IPowerSource, a Panel on site B — exercising the
-        // companion IPowerSourceRef, PanelRef implementing it, the IReference accessor, and the WireReference seam.
+        // per-interface IPowerSourceRef and all three member tiers: default async (GetAvailableW), [VolatileAccess]
+        // gauge (LiveDrawW, a plain synchronous getter) and [Triggerable] fire-and-forget (SetBudget).
         const string source = """
             using System.Threading.Tasks;
             using SimulaSharp.Kernel.Attributes;
@@ -22,22 +23,34 @@ public sealed class PipelineCompileTests
             using SimulaSharp.Kernel.Services;
             namespace Demo;
 
-            public interface IPowerSource { double AvailableW { get; } }
+            public interface IPowerSource
+            {
+                double AvailableW { get; }
+                [VolatileAccess] double LiveDrawW { get; }
+                [Triggerable] void SetBudget(double w);
+            }
 
             public sealed class Panel : ModelBase, IPowerSource
             {
                 public Panel(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
                 public double AvailableW => 42.0;
+                public double LiveDrawW => 3.0;
+                public void SetBudget(double w) { }
             }
 
-            [References<IPowerSource>("Sources")]
+            [CrossReference<IPowerSource>("Sources")]
             public partial class Grid : ModelBase
             {
                 public Grid(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
                 public async Task<double> Total()
                 {
                     double sum = 0;
-                    foreach (var src in Sources) sum += await src.GetAvailableW(Scheduler);
+                    foreach (var src in Sources)
+                    {
+                        sum += await src.GetAvailableW();   // default → async request/response
+                        sum += src.LiveDrawW;               // [VolatileAccess] → synchronous gauge read
+                        src.SetBudget(10);                  // [Triggerable] → fire-and-forget
+                    }
                     return sum;
                 }
             }
@@ -50,7 +63,7 @@ public sealed class PipelineCompileTests
                   Models:
                     - Name: Grid
                       Type: Demo.Grid
-                      Refs:
+                      CRefs:
                         - Sources: [ E2E.Panel ]
                 - Name: B
                   Models:
@@ -65,9 +78,9 @@ public sealed class PipelineCompileTests
     [Test]
     public void Containment_and_a_class_reference_compile_end_to_end()
     {
-        // One model carrying BOTH a [Contains<Wheel>] container and a [References<Wheel>] reference.
+        // One model carrying BOTH a [Contains<Wheel>] container and an intra-site [Reference<Wheel>] — the latter
+        // holds the same-site Wheel instances directly, so it is read synchronously (no Ref, no await).
         const string source = """
-            using System.Threading.Tasks;
             using SimulaSharp.Kernel.Attributes;
             using SimulaSharp.Kernel.Logging;
             using SimulaSharp.Kernel.Model;
@@ -81,12 +94,12 @@ public sealed class PipelineCompileTests
             }
 
             [Contains<Wheel>("Wheels")]
-            [References<Wheel>("Spare")]
+            [Reference<Wheel>("Spare")]
             public partial class Car : ModelBase
             {
                 public Car(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
                 public int WheelCount => Wheels.Count;
-                public async Task<int> SpareRpm() => await Spare[0].GetRpm(Scheduler);
+                public int SpareRpm() => Spare[0].Rpm;
             }
             """;
         const string yaml = """

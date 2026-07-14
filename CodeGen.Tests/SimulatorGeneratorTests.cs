@@ -1,7 +1,7 @@
 namespace SimulaSharp.CodeGen.Tests;
 
 /// <summary>
-/// Tests <see cref="SimulatorGenerator"/> emission and its strict SIM001–SIM016 validation.
+/// Tests <see cref="SimulatorGenerator"/> emission and its strict SIM001–SIM018 validation.
 /// Each diagnostic test feeds a source + assembly YAML crafted to trip exactly one rule.
 /// </summary>
 [TestFixture]
@@ -22,7 +22,7 @@ public sealed class SimulatorGeneratorTests
             [ServiceRef] public Svc Dep { get; set; } = null!;
             [Parameter] public int Capacity { get; set; }
         }
-        [References<Unit>("Peers")]
+        [Reference<Unit>("Peers")]
         public partial class Unit : ModelBase
         {
             public Unit(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
@@ -79,10 +79,9 @@ public sealed class SimulatorGeneratorTests
             Assert.That(r.AllSource, Does.Contain("new global::SimulaSharp.Kernel.Primitives.ContainerFactory()"));
             Assert.That(r.AllSource, Does.Contain("Units = "));
             Assert.That(r.AllSource, Does.Contain(".Build<global::Demo.Unit>()"));
-            // References are pre-wrapped into a RefCollection and handed to the referrer's WireReference seam.
-            Assert.That(r.AllSource, Does.Contain("new global::SimulaSharp.Kernel.Primitives.RefCollection()"));
-            Assert.That(r.AllSource, Does.Contain("new global::Demo.UnitRef("));
-            Assert.That(r.AllSource, Does.Contain(".WireReference(\"Peers\","));
+            // An intra-site [Reference<T>] is wired directly (no Ref) through the WireLocalReference seam.
+            Assert.That(r.AllSource, Does.Contain(".WireLocalReference(\"Peers\","));
+            Assert.That(r.AllSource, Does.Contain("new global::System.Collections.Generic.List<global::SimulaSharp.Kernel.Model.IModel>"));
         });
     }
 
@@ -338,7 +337,7 @@ public sealed class SimulatorGeneratorTests
     [Test]
     public void SIM010_reports_an_unknown_reference_name()
     {
-        // Unit declares [References<Unit>("Peers")] — a reference named "Nope" does not exist.
+        // Unit declares [Reference<Unit>("Peers")] — a reference named "Nope" does not exist.
         var r = Run("""
             Simulator:
               Name: W
@@ -373,7 +372,7 @@ public sealed class SimulatorGeneratorTests
     [Test]
     public void SIM012_reports_a_referenced_instance_not_assignable_to_the_reference()
     {
-        // Peers is [References<Unit>]; a Plant is a model but not a Unit.
+        // Peers is [Reference<Unit>]; a Plant is a model but not a Unit.
         var r = Run("""
             Simulator:
               Name: W
@@ -388,6 +387,56 @@ public sealed class SimulatorGeneratorTests
                       Type: Demo.Plant
             """);
         Assert.That(r.HasDiagnostic("SIM012"), Is.True);
+    }
+
+    [Test]
+    public void SIM017_reports_an_intra_site_reference_that_crosses_a_site()
+    {
+        // Peers is an intra-site [Reference<Unit>], but its target lives on a different site.
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: U
+                      Type: Demo.Unit
+                      Refs:
+                        - Peers: [ W.V ]
+                - Name: Other
+                  Models:
+                    - Name: V
+                      Type: Demo.Unit
+            """);
+        Assert.That(r.HasDiagnostic("SIM017"), Is.True);
+    }
+
+    [Test]
+    public void SIM018_reports_a_cross_reference_whose_target_is_not_an_interface()
+    {
+        // A [CrossReference<T>] must target an interface; Gizmo targets the concrete Unit.
+        const string world = World + """
+
+            [CrossReference<Unit>("Buddies")]
+            public partial class Gizmo : ModelBase
+            {
+                public Gizmo(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+            }
+            """;
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: G
+                      Type: Demo.Gizmo
+                      CRefs:
+                        - Buddies: [ W.U ]
+                    - Name: U
+                      Type: Demo.Unit
+            """, world);
+        Assert.That(r.HasDiagnostic("SIM018"), Is.True);
     }
 
     [Test]

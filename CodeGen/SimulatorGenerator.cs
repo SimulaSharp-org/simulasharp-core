@@ -87,6 +87,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         {
             Compilation = compilation,
             ContainsAttr = compilation.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ContainsAttribute`1"),
+            CrossRefAttr = compilation.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.CrossReferenceAttribute`1"),
         };
         var init = new StringBuilder();
 
@@ -129,18 +130,33 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                 init.Append("        ").Append(modelVar).Append('.').Append(member).Append(" = ").Append(svcVar).AppendLine(";");
         }
 
-        // 4. Reference wiring: for each reference, build a RefCollection of pre-wrapped target Refs (the simulator
-        //    constructs each `new <ConcreteType>Ref(target)` because only it knows the target's concrete type), then
-        //    hand it to the referrer's hidden WireReference seam, which downcasts each Ref to the reference's type.
-        foreach (var (modelVar, field, paths) in ctx.Refs)
+        // 4. Reference wiring (after everything is constructed). A cross-site [CrossReference<T>] is wired through a
+        //    RefCollection of pre-wrapped target Refs (the simulator constructs each `new <ConcreteType>Ref(target)`
+        //    because only it knows the target's concrete type), handed to the referrer's hidden WireReference seam. An
+        //    intra-site [Reference<T>] needs no Ref: the target instances themselves (same site) are handed to the
+        //    WireLocalReference seam, which casts each to the reference's element type.
+        foreach (var (modelVar, callerSite, field, elemIface, paths, isCross) in ctx.Refs)
         {
-            string rc = ctx.NextVar();
-            init.Append("        var ").Append(rc).AppendLine(" = new global::SimulaSharp.Kernel.Primitives.RefCollection();");
-            foreach (var p in paths)
-                if (ctx.ModelsByPath.TryGetValue(p, out var targetVar) && ctx.TypesByPath.TryGetValue(p, out var targetType))
-                    init.Append("        ").Append(rc).Append(".Add(new global::").Append(targetType).Append("Ref(").Append(targetVar).AppendLine("));");
-            init.Append("        ((global::SimulaSharp.Kernel.Model.IReferenceWiring)").Append(modelVar).Append(").WireReference(")
-                .Append(Str(field)).Append(", ").Append(rc).AppendLine(");");
+            if (isCross)
+            {
+                // Each target is wrapped as `new <I>Ref((I)target, targetSite, callerSite)` — the Ref captures both
+                // schedulers so it can dispatch (same-site inline / cross-site marshal) without a per-call scheduler.
+                string rc = ctx.NextVar();
+                init.Append("        var ").Append(rc).AppendLine(" = new global::SimulaSharp.Kernel.Primitives.RefCollection();");
+                foreach (var p in paths)
+                    if (ctx.ModelsByPath.TryGetValue(p, out var targetVar) && ctx.SiteVarByPath.TryGetValue(p, out var targetSite))
+                        init.Append("        ").Append(rc).Append(".Add(new ").Append(elemIface).Append("Ref((")
+                            .Append(elemIface).Append(')').Append(targetVar).Append(", ").Append(targetSite).Append(", ").Append(callerSite).AppendLine("));");
+                init.Append("        ((global::SimulaSharp.Kernel.Model.IReferenceWiring)").Append(modelVar).Append(").WireReference(")
+                    .Append(Str(field)).Append(", ").Append(rc).AppendLine(");");
+            }
+            else
+            {
+                var targets = paths.Where(p => ctx.ModelsByPath.ContainsKey(p)).Select(p => ctx.ModelsByPath[p]);
+                init.Append("        ((global::SimulaSharp.Kernel.Model.ILocalReferenceWiring)").Append(modelVar).Append(").WireLocalReference(")
+                    .Append(Str(field)).Append(", new global::System.Collections.Generic.List<global::SimulaSharp.Kernel.Model.IModel> { ")
+                    .Append(string.Join(", ", targets)).AppendLine(" });");
+            }
         }
 
         string missionStart = MissionStartExpr(sim.MissionStart);
@@ -189,6 +205,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         string v = ctx.NextVar();
         ctx.ModelsByPath[fullPath] = v;
         ctx.TypesByPath[fullPath] = node.Type;
+        ctx.SiteVarByPath[fullPath] = siteVar;
         ctx.ModelVars.Add(v);
 
         sb.Append("        var ").Append(v).Append(" = Register(new global::").Append(node.Type)
@@ -205,10 +222,15 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         foreach (var kv in entry)
             ctx.Deps.Add((v, kv.Key, kv.Value));
 
-        // References: each entry is { <referenceFieldName>: [full.path, …] } — wired in a later pass.
+        // References, wired in a later pass. `Refs:` are intra-site (direct) and `CRefs:` are cross-site (through a
+        // Ref); each entry is { <referenceFieldName>: [full.path, …] }. For cross refs the element interface is
+        // resolved and the referrer's own site var captured, so the Ref can be built (target, targetSched, callerSched).
         foreach (var entry in node.Refs ?? [])
         foreach (var kv in entry)
-            ctx.Refs.Add((v, kv.Key, kv.Value ?? []));
+            ctx.Refs.Add((v, siteVar, kv.Key, "", kv.Value ?? [], false));
+        foreach (var entry in node.CRefs ?? [])
+        foreach (var kv in entry)
+            ctx.Refs.Add((v, siteVar, kv.Key, ctx.CrossReferenceElementType(node.Type, kv.Key), kv.Value ?? [], true));
 
         return v;
     }
@@ -259,13 +281,15 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor NoContainer = D("SIM007", "Unknown container", "The model '{0}' does not have a SubModel container named '{1}'");
     private static readonly DiagnosticDescriptor ContainerMismatch = D("SIM008", "Container type mismatch", "The Model '{0}' does not implement/inherit-from '{1}'");
     private static readonly DiagnosticDescriptor NotAModel = D("SIM009", "Not a model", "'{0}' is not a model (does not implement IModel)");
-    private static readonly DiagnosticDescriptor BadReference = D("SIM010", "Unknown reference", "The model '{1}' does not have a reference named '{0}' (declare it with [References<T>])");
+    private static readonly DiagnosticDescriptor BadReference = D("SIM010", "Unknown reference", "The model '{1}' does not have a reference named '{0}' (declare it with [Reference<T>] for 'Refs:' or [CrossReference<T>] for 'CRefs:')");
     private static readonly DiagnosticDescriptor UnresolvedRef = D("SIM011", "Unresolved reference", "Reference field '{0}' targets unknown instance '{1}'");
     private static readonly DiagnosticDescriptor RefMismatch = D("SIM012", "Reference type mismatch", "Referenced instance '{0}' is not assignable to reference '{1}' element type '{2}'");
     private static readonly DiagnosticDescriptor BadServiceRef = D("SIM013", "Invalid dependency", "Dependency member '{0}' was not found on '{1}' or is not [ServiceRef]");
     private static readonly DiagnosticDescriptor UnknownService = D("SIM014", "Unknown service", "Dependency '{0}' names unknown service '{1}'");
     private static readonly DiagnosticDescriptor ServiceMismatch = D("SIM015", "Service type mismatch", "Service '{0}' is not assignable to dependency member '{1}'");
     private static readonly DiagnosticDescriptor UnknownConfigKey = D("SIM016", "Unknown config key", "Config key '{0}' has no matching [Parameter] member on '{1}'", DiagnosticSeverity.Warning);
+    private static readonly DiagnosticDescriptor LocalRefCrossesSite = D("SIM017", "Intra-site reference crosses a site", "Intra-site reference '{0}' targets '{1}' on a different site — declare it as [CrossReference<T>] to cross sites");
+    private static readonly DiagnosticDescriptor CrossRefNotInterface = D("SIM018", "Cross-reference target is not an interface", "Cross-reference '{0}' on model '{1}' must target an interface (a concrete type is not allowed for [CrossReference<T>])");
 
     // ── Validator ───────────────────────────────────────────────────────────────
     private sealed class Validator
@@ -275,7 +299,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public readonly List<Diagnostic> Diagnostics = new();
         public bool HasErrors { get; private set; }
 
-        private readonly INamedTypeSymbol? _iModel, _iService, _containsAttr, _referencesAttr, _configAttr, _serviceRefAttr, _iClock, _iScheduler, _iLogger;
+        private readonly INamedTypeSymbol? _iModel, _iService, _containsAttr, _referencesAttr, _localReferencesAttr, _configAttr, _serviceRefAttr, _iClock, _iScheduler, _iLogger;
 
         public Validator(Compilation c, Location loc)
         {
@@ -284,7 +308,8 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             _iModel = c.GetTypeByMetadataName("SimulaSharp.Kernel.Model.IModel");
             _iService = c.GetTypeByMetadataName("SimulaSharp.Kernel.Model.IService");
             _containsAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ContainsAttribute`1");
-            _referencesAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ReferencesAttribute`1");
+            _referencesAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.CrossReferenceAttribute`1");
+            _localReferencesAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ReferenceAttribute`1");
             _configAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ParameterAttribute");
             _serviceRefAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.ServiceRefAttribute");
             _iClock = c.GetTypeByMetadataName("SimulaSharp.Kernel.Services.IClock");
@@ -318,20 +343,25 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                             CheckDep(holder, kv.Key, kv.Value, services);
 
             var paths = new Dictionary<string, INamedTypeSymbol>();
-            var pendingRefs = new List<(string Field, ITypeSymbol? Elem, string Path)>();
+            var sitesByPath = new Dictionary<string, string>();
+            var pendingRefs = new List<(string Field, ITypeSymbol? Elem, string Path, bool IsCross, string RefSite)>();
             foreach (var site in sim.Sites ?? [])
                 foreach (var root in site.Models ?? [])
-                    WalkModel(root, simName, services, paths, pendingRefs, containedPath: null);
+                    WalkModel(root, simName, site.Name, services, paths, sitesByPath, pendingRefs, containedPath: null);
 
-            foreach (var (field, elem, target) in pendingRefs)
+            foreach (var (field, elem, target, isCross, refSite) in pendingRefs)
             {
                 if (!paths.TryGetValue(target, out var t)) { Report(UnresolvedRef, field, target); continue; }
                 if (elem is not null && !Assignable(t, elem)) Report(RefMismatch, target, field, elem.ToDisplayString());
+                // An intra-site [Reference<T>] must resolve to a target on the same site as the referrer.
+                if (!isCross && sitesByPath.TryGetValue(target, out var tSite) && tSite != refSite)
+                    Report(LocalRefCrossesSite, field, target);
             }
         }
 
-        private INamedTypeSymbol? WalkModel(ModelNode node, string prefix, Dictionary<string, INamedTypeSymbol> services,
-            Dictionary<string, INamedTypeSymbol> paths, List<(string, ITypeSymbol?, string)> pendingRefs, string? containedPath)
+        private INamedTypeSymbol? WalkModel(ModelNode node, string prefix, string siteName, Dictionary<string, INamedTypeSymbol> services,
+            Dictionary<string, INamedTypeSymbol> paths, Dictionary<string, string> sitesByPath,
+            List<(string, ITypeSymbol?, string, bool, string)> pendingRefs, string? containedPath)
         {
             string full = prefix + "." + node.Name;
             if (paths.ContainsKey(full)) Report(DuplicatePath, full);
@@ -339,6 +369,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             var type = ResolveType(node.Type, node.Name, service: false, containedPath);
             if (type is null) return null;
             paths[full] = type;
+            sitesByPath[full] = siteName;
             CheckConfig(type, node.Config);
 
             foreach (var entry in node.Deps ?? [])
@@ -355,7 +386,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                     foreach (var child in kv.Value ?? [])
                     {
                         string childFull = full + "." + child.Name;
-                        var childType = WalkModel(child, full, services, paths, pendingRefs, childFull);
+                        var childType = WalkModel(child, full, siteName, services, paths, sitesByPath, pendingRefs, childFull);
                         // Assignability (SIM008) only matters once we know the child IS a model — a non-model
                         // child already reported SIM009 in its own WalkModel, so don't pile a second error on.
                         if (elem is not null && childType is not null
@@ -365,27 +396,38 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                     }
                 }
 
-            // References: each entry is { <referenceName>: [dotted.paths] }. The reference is declared by a
-            // [References<T>("referenceName")] attribute on the model (not a field); its target type is T.
+            // References come in two YAML blocks. `Refs:` are intra-site [Reference<T>] (same-site, direct); `CRefs:`
+            // are cross-site [CrossReference<T>] (interface-only, through a Ref). Each block validates against its own
+            // attribute kind; the entry shape is { <referenceName>: [dotted.paths] } in both.
             foreach (var entry in node.Refs ?? [])
                 foreach (var kv in entry)
                 {
-                    var elem = ReferenceTarget(type, kv.Key);
-                    if (elem is null) Report(BadReference, kv.Key, type.Name);
+                    var elem = ReferenceTarget(type, kv.Key, _localReferencesAttr);
+                    if (elem is null) { Report(BadReference, kv.Key, type.Name); continue; }
                     foreach (var p in kv.Value ?? [])
-                        pendingRefs.Add((kv.Key, elem, p));
+                        pendingRefs.Add((kv.Key, elem, p, false, siteName));
+                }
+            foreach (var entry in node.CRefs ?? [])
+                foreach (var kv in entry)
+                {
+                    var elem = ReferenceTarget(type, kv.Key, _referencesAttr);
+                    if (elem is null) { Report(BadReference, kv.Key, type.Name); continue; }
+                    if (elem is { TypeKind: not TypeKind.Interface }) Report(CrossRefNotInterface, kv.Key, type.Name);
+                    foreach (var p in kv.Value ?? [])
+                        pendingRefs.Add((kv.Key, elem, p, true, siteName));
                 }
 
             return type;
         }
 
-        /// <summary>The target type <c>T</c> of the <c>[References&lt;T&gt;("name")]</c> reference declared on
-        /// <paramref name="type"/> (walking base types), or null when the model declares no such reference.</summary>
-        private ITypeSymbol? ReferenceTarget(INamedTypeSymbol type, string name)
+        /// <summary>The target type <c>T</c> of the reference named <paramref name="name"/> declared on
+        /// <paramref name="type"/> (walking base types) via <paramref name="refAttr"/> (the cross- or intra-site
+        /// reference attribute), or null when the model declares no such reference of that kind.</summary>
+        private static ITypeSymbol? ReferenceTarget(INamedTypeSymbol type, string name, INamedTypeSymbol? refAttr)
         {
             for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
                 foreach (var a in t.GetAttributes())
-                    if (SymbolEqualityComparer.Default.Equals(a.AttributeClass?.OriginalDefinition, _referencesAttr)
+                    if (SymbolEqualityComparer.Default.Equals(a.AttributeClass?.OriginalDefinition, refAttr)
                         && a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is string n && n == name
                         && a.AttributeClass is { TypeArguments.Length: 1 } ac)
                         return ac.TypeArguments[0];
@@ -498,12 +540,29 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public readonly Dictionary<string, string> Services = new();
         public readonly Dictionary<string, string> ModelsByPath = new();
         public readonly Dictionary<string, string> TypesByPath = new();
+        public readonly Dictionary<string, string> SiteVarByPath = new();   // path → the site (scheduler) var it runs on
         public readonly List<string> ModelVars = new();
         public readonly List<(string ModelVar, string Member, string ServiceName)> Deps = new();
-        public readonly List<(string ModelVar, string Field, List<string> Paths)> Refs = new();
+        // (referrer var, referrer's site var, field name, cross-ref element interface (FQ, "" for intra), targets, isCross)
+        public readonly List<(string ModelVar, string CallerSite, string Field, string ElemInterface, List<string> Paths, bool IsCross)> Refs = new();
 
         public Compilation Compilation = null!;
         public INamedTypeSymbol? ContainsAttr;
+        public INamedTypeSymbol? CrossRefAttr;
+
+        /// <summary>The fully-qualified interface <c>T</c> of the <c>[CrossReference&lt;T&gt;("name")]</c> declared on
+        /// <paramref name="parentType"/> (walking base types), or "" if the reference is not a cross-reference — in
+        /// which case it is an intra-site <c>[Reference&lt;T&gt;]</c> (validation has guaranteed one of the two exists).</summary>
+        public string CrossReferenceElementType(string parentType, string name)
+        {
+            for (INamedTypeSymbol? t = Compilation.GetTypeByMetadataName(parentType); t is not null; t = t.BaseType)
+                foreach (var a in t.GetAttributes())
+                    if (SymbolEqualityComparer.Default.Equals(a.AttributeClass?.OriginalDefinition, CrossRefAttr)
+                        && a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is string n && n == name
+                        && a.AttributeClass is { TypeArguments.Length: 1 } ac)
+                        return ac.TypeArguments[0].ToDisplayString(Fq);
+            return "";
+        }
 
         /// <summary>The fully-qualified element type <c>T</c> of the <c>[Contains&lt;T&gt;("name")]</c> container
         /// on <paramref name="parentType"/>, for emitting <c>Build&lt;T&gt;()</c>. Validation has already
@@ -552,7 +611,8 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public string Type { get; set; } = "";
         public Dictionary<string, string>? Config { get; set; }
         public List<Dictionary<string, List<ModelNode>>>? Models { get; set; }   // containment
-        public List<Dictionary<string, List<string>>>? Refs { get; set; }        // references (deferred)
+        public List<Dictionary<string, List<string>>>? Refs { get; set; }        // intra-site [Reference<T>]
+        public List<Dictionary<string, List<string>>>? CRefs { get; set; }       // cross-site [CrossReference<T>]
         public List<Dictionary<string, string>>? Deps { get; set; }              // service deps
     }
 }

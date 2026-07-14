@@ -1,10 +1,12 @@
 namespace SimulaSharp.Kernel.Attributes;
 
 /// <summary>
-/// Declares that the decorated model holds a <b>reference</b> — a non-owning link — to a list of models of type
-/// <typeparamref name="T"/>, surfaced as a read-only <c>IReference&lt;T&gt;Ref</c> accessor named <see cref="Name"/>
-/// whose elements are the generated guarded <c>&lt;T&gt;Ref</c> accessors. A reference may cross site boundaries, so
-/// calls go through those Refs (same-site calls resolve directly; cross-site calls marshal onto the target's site).
+/// Declares that the decorated model holds a <b>cross-site reference</b> — a non-owning link that may cross SimSite
+/// boundaries — to a list of models of type <typeparamref name="T"/>, surfaced as a read-only
+/// <c>IReference&lt;T&gt;Ref</c> accessor named <see cref="Name"/> whose elements are the generated guarded
+/// <c>&lt;T&gt;Ref</c> accessors. Because a target may live on another thread, calls go through those Refs (same-site
+/// calls resolve directly; cross-site calls marshal onto the target's site). Contrast the intra-site
+/// <c>[Reference&lt;T&gt;]</c>, which is validated same-site and reached by direct synchronous calls with no Ref.
 /// <para>
 /// The source generator emits a <c>public IReference&lt;{T}Ref&gt; {Name} { get; }</c> accessor on the
 /// (<c>partial</c>) model, backed by a hidden fillable list the generated simulator populates during assembly from
@@ -16,7 +18,7 @@ namespace SimulaSharp.Kernel.Attributes;
 /// </summary>
 /// <typeparam name="T">The referenced model type (a class or an interface).</typeparam>
 [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = true)]
-public sealed class ReferencesAttribute<T>(string name) : Attribute
+public sealed class CrossReferenceAttribute<T>(string name) : Attribute
 {
     /// <summary>The reference accessor name: the generated property's name and the YAML <c>Refs</c> key.</summary>
     public string Name { get; } = name;

@@ -3,85 +3,106 @@ namespace SimulaSharp.CodeGen.Tests;
 [TestFixture]
 public sealed class RefGeneratorTests
 {
-    private const string Model = """
+    // An interface used as a [CrossReference<I>] target, exercising all three member tiers.
+    private const string Source = """
+        using SimulaSharp.Kernel.Attributes;
         using SimulaSharp.Kernel.Logging;
         using SimulaSharp.Kernel.Model;
         using SimulaSharp.Kernel.Services;
         namespace Demo;
-        public sealed class Tracker : ModelBase
+        public interface IProbe
         {
-            public Tracker(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+            double Interrogate(int ping);                // default → async request/response
+            [VolatileAccess] double LiveValue { get; }   // gauge → synchronous getter
+            [Triggerable] void Nudge(int by);            // notify → fire-and-forget void
+        }
+        public sealed class Sensor : ModelBase, IProbe
+        {
+            public Sensor(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
             public double Interrogate(int ping) => ping;
-            public int Value { get; set; }
+            public double LiveValue => 1.0;
+            public void Nudge(int by) { }
+        }
+        [CrossReference<IProbe>("Probes")]
+        public partial class Hub : ModelBase
+        {
+            public Hub(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
         }
         """;
 
     [Test]
-    public void Emits_a_Ref_wrapping_each_public_member()
+    public void Emits_one_Ref_per_cross_reference_interface_with_captured_schedulers()
     {
-        var r = GeneratorHarness.Run(new RefGenerator(), Model);
+        var r = GeneratorHarness.Run(new RefGenerator(), Source);
         Assert.Multiple(() =>
         {
-            Assert.That(r.AllSource, Does.Contain("sealed class TrackerRef : global::SimulaSharp.Kernel.Model.IModelRef"));
-            Assert.That(r.AllSource, Does.Contain("Interrogate(global::SimulaSharp.Kernel.Services.IScheduler callerScheduler, int ping)"));
-            Assert.That(r.AllSource, Does.Contain("GetValue(global::SimulaSharp.Kernel.Services.IScheduler callerScheduler)"));
-            Assert.That(r.AllSource, Does.Contain("SetValue(global::SimulaSharp.Kernel.Services.IScheduler callerScheduler"));
+            Assert.That(r.AllSource, Does.Contain("sealed class IProbeRef : global::SimulaSharp.Kernel.Model.IModelRef"));
+            // The ctor captures the interface target + both schedulers once — no per-call scheduler argument.
+            Assert.That(r.AllSource, Does.Contain("public IProbeRef(global::Demo.IProbe target, global::SimulaSharp.Kernel.Services.IScheduler targetSched, global::SimulaSharp.Kernel.Services.IScheduler callerSched)"));
+            // No per-model Ref is minted — the target is always the interface.
+            Assert.That(r.AllSource, Does.Not.Contain("class SensorRef"));
         });
     }
 
     [Test]
-    public void Each_accessor_dispatches_same_site_directly_and_cross_site_via_inject()
+    public void Default_members_are_async_and_dispatch_via_captured_schedulers()
     {
-        var r = GeneratorHarness.Run(new RefGenerator(), Model);
+        var r = GeneratorHarness.Run(new RefGenerator(), Source);
         Assert.Multiple(() =>
         {
-            Assert.That(r.AllSource, Does.Contain("object.ReferenceEquals(callerScheduler, _target.Scheduler)"));
-            Assert.That(r.AllSource, Does.Contain("_target.Scheduler.InjectAsync(() => _target.Interrogate(ping))"));
+            Assert.That(r.AllSource, Does.Contain("global::System.Threading.Tasks.Task<double> Interrogate(int ping)"));
+            Assert.That(r.AllSource, Does.Contain("object.ReferenceEquals(_callerSched, _targetSched)"));
+            Assert.That(r.AllSource, Does.Contain("_targetSched.InjectAsync(() => _target.Interrogate(ping))"));
         });
     }
 
     [Test]
-    public void ModelBase_plumbing_is_not_routed()
+    public void A_Triggerable_method_is_fire_and_forget_void()
     {
-        var r = GeneratorHarness.Run(new RefGenerator(), Model);
+        var r = GeneratorHarness.Run(new RefGenerator(), Source);
         Assert.Multiple(() =>
         {
-            Assert.That(r.AllSource, Does.Not.Contain("Configure("));
-            Assert.That(r.AllSource, Does.Not.Contain("GetTimeKeeper("));
-            Assert.That(r.AllSource, Does.Not.Contain("GetScheduler("));
+            Assert.That(r.AllSource, Does.Contain("public void Nudge(int by)"));
+            Assert.That(r.AllSource, Does.Contain("_targetSched.Post(() => _target.Nudge(by))"));
         });
     }
 
     [Test]
-    public void An_interface_reference_target_mints_a_companion_interface_its_impls_Ref_implements()
+    public void A_VolatileAccess_property_is_a_direct_synchronous_getter()
     {
-        // IPowerSource is a framework-pure interface used as a [References<IPowerSource>] target; Panel implements
-        // it. The companion IPowerSourceRef must be minted, and PanelRef must implement it.
+        var r = GeneratorHarness.Run(new RefGenerator(), Source);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.AllSource, Does.Contain("public double LiveValue => _target.LiveValue;"));
+            Assert.That(r.AllSource, Does.Not.Contain("GetLiveValue("));
+        });
+    }
+
+    [Test]
+    public void SIM019_reports_a_Triggerable_method_that_is_not_void()
+    {
         const string source = """
             using SimulaSharp.Kernel.Attributes;
-            using SimulaSharp.Kernel.Logging;
-            using SimulaSharp.Kernel.Model;
-            using SimulaSharp.Kernel.Services;
             namespace Demo;
-            public interface IPowerSource { double AvailablePowerW { get; } }
-            public sealed class Panel : ModelBase, IPowerSource
-            {
-                public Panel(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
-                public double AvailablePowerW => 0;
-            }
-            [References<IPowerSource>("Sources")]
-            public partial class Grid : ModelBase
-            {
-                public Grid(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
-            }
+            public interface IBad { [Triggerable] int Ping(); }
+            [CrossReference<IBad>("X")] public partial class Holder { }
             """;
         var r = GeneratorHarness.Run(new RefGenerator(), source);
-        Assert.Multiple(() =>
-        {
-            Assert.That(r.AllSource, Does.Contain("interface IPowerSourceRef : global::SimulaSharp.Kernel.Model.IModelRef"));
-            Assert.That(r.AllSource, Does.Contain("GetAvailablePowerW(global::SimulaSharp.Kernel.Services.IScheduler callerScheduler);"));
-            Assert.That(r.AllSource, Does.Contain("sealed class PanelRef : global::SimulaSharp.Kernel.Model.IModelRef, global::Demo.IPowerSourceRef"));
-        });
+        Assert.That(r.HasDiagnostic("SIM019"), Is.True);
+    }
+
+    [Test]
+    public void SIM021_reports_a_VolatileAccess_property_that_is_not_a_get_only_gauge()
+    {
+        // A settable property (not get-only) can't be a gauge.
+        const string source = """
+            using SimulaSharp.Kernel.Attributes;
+            namespace Demo;
+            public interface IBad { [VolatileAccess] double Draw { get; set; } }
+            [CrossReference<IBad>("X")] public partial class Holder { }
+            """;
+        var r = GeneratorHarness.Run(new RefGenerator(), source);
+        Assert.That(r.HasDiagnostic("SIM021"), Is.True);
     }
 }
 
@@ -94,11 +115,8 @@ public sealed class ReferenceGeneratorTests
         using SimulaSharp.Kernel.Model;
         using SimulaSharp.Kernel.Services;
         namespace Demo;
-        public sealed class Tracker : ModelBase
-        {
-            public Tracker(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
-        }
-        [References<Tracker>("Peers")]
+        public interface ITracker { }
+        [CrossReference<ITracker>("Peers")]
         public partial class Hub : ModelBase
         {
             public Hub(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
@@ -112,10 +130,47 @@ public sealed class ReferenceGeneratorTests
         Assert.Multiple(() =>
         {
             Assert.That(r.AllSource, Does.Contain("global::SimulaSharp.Kernel.Model.IReferenceWiring"));
-            Assert.That(r.AllSource, Does.Contain("global::SimulaSharp.Kernel.Primitives.IReference<global::Demo.TrackerRef> Peers"));
-            Assert.That(r.AllSource, Does.Contain("new global::SimulaSharp.Kernel.Primitives.FillableReference<global::Demo.TrackerRef>()"));
+            Assert.That(r.AllSource, Does.Contain("global::SimulaSharp.Kernel.Primitives.IReference<global::Demo.ITrackerRef> Peers"));
+            Assert.That(r.AllSource, Does.Contain("new global::SimulaSharp.Kernel.Primitives.FillableReference<global::Demo.ITrackerRef>()"));
             Assert.That(r.AllSource, Does.Contain(".WireReference(string member, global::SimulaSharp.Kernel.Primitives.RefCollection refs)"));
-            Assert.That(r.AllSource, Does.Contain("(global::Demo.TrackerRef)__r"));
+            Assert.That(r.AllSource, Does.Contain("(global::Demo.ITrackerRef)__r"));
+        });
+    }
+}
+
+[TestFixture]
+public sealed class LocalReferenceGeneratorTests
+{
+    private const string Model = """
+        using SimulaSharp.Kernel.Attributes;
+        using SimulaSharp.Kernel.Logging;
+        using SimulaSharp.Kernel.Model;
+        using SimulaSharp.Kernel.Services;
+        namespace Demo;
+        public sealed class Tracker : ModelBase
+        {
+            public Tracker(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+        }
+        [Reference<Tracker>("Peers")]
+        public partial class Hub : ModelBase
+        {
+            public Hub(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+        }
+        """;
+
+    [Test]
+    public void Emits_a_readonly_IReadOnlyList_accessor_and_a_local_wire_seam()
+    {
+        // An intra-site [Reference<T>] holds the target instances directly (no Ref, no marshalling): a
+        // read-only IReadOnlyList<T> accessor filled by the ILocalReferenceWiring seam.
+        var r = GeneratorHarness.Run(new LocalReferenceGenerator(), Model);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.AllSource, Does.Contain("global::SimulaSharp.Kernel.Model.ILocalReferenceWiring"));
+            Assert.That(r.AllSource, Does.Contain("global::System.Collections.Generic.IReadOnlyList<global::Demo.Tracker> Peers"));
+            Assert.That(r.AllSource, Does.Contain("new global::System.Collections.Generic.List<global::Demo.Tracker>()"));
+            Assert.That(r.AllSource, Does.Contain(".WireLocalReference(string member, global::System.Collections.Generic.IReadOnlyList<global::SimulaSharp.Kernel.Model.IModel> targets)"));
+            Assert.That(r.AllSource, Does.Contain("(global::Demo.Tracker)__m"));
         });
     }
 }
