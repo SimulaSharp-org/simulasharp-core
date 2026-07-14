@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -38,6 +39,19 @@ public sealed class ServiceGenerator : IIncrementalGenerator
 
     private static readonly SymbolDisplayFormat Fq = SymbolDisplayFormat.FullyQualifiedFormat;
 
+    private static readonly DiagnosticDescriptor ServiceRequestTooManyParams = new("SIM022",
+        "A service request takes at most one context parameter",
+        "[ServiceRequest] method '{0}' has more than one parameter — a request carries a single optional context; reduce it to zero or one parameter",
+        "SimulaSharp.Assembly", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+    /// <summary>A diagnostic to raise on the output side, carried out of the transform (which cannot report).</summary>
+    private readonly struct DiagInfo
+    {
+        public readonly string MethodName;
+        public readonly Location Location;
+        public DiagInfo(string methodName, Location location) { MethodName = methodName; Location = location; }
+    }
+
     /// <inheritdoc/>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -48,10 +62,15 @@ public sealed class ServiceGenerator : IIncrementalGenerator
             .Where(static g => g is not null)
             .Select(static (g, _) => g!.Value);
 
-        context.RegisterSourceOutput(services, static (spc, g) => spc.AddSource(g.HintName, g.Source));
+        context.RegisterSourceOutput(services, static (spc, g) =>
+        {
+            foreach (var d in g.Diags)
+                spc.ReportDiagnostic(Diagnostic.Create(ServiceRequestTooManyParams, d.Location, d.MethodName));
+            if (g.Source.Length > 0) spc.AddSource(g.HintName, g.Source);
+        });
     }
 
-    private static (string HintName, string Source)? Build(GeneratorSyntaxContext ctx)
+    private static (string HintName, string Source, ImmutableArray<DiagInfo> Diags)? Build(GeneratorSyntaxContext ctx)
     {
         if (ctx.SemanticModel.GetDeclaredSymbol((ClassDeclarationSyntax)ctx.Node) is not INamedTypeSymbol service)
             return null;
@@ -63,9 +82,11 @@ public sealed class ServiceGenerator : IIncrementalGenerator
         if (first is null || first.GetSyntax() != ctx.Node) return null;
 
         var body = new StringBuilder();
+        var diags = new List<DiagInfo>();
         EmitEvents(body, service);
-        EmitRequests(body, service);
-        if (body.Length == 0) return null;   // nothing to generate
+        EmitRequests(body, diags, service);
+        if (body.Length == 0)   // nothing to emit; still surface any diagnostics we collected
+            return diags.Count == 0 ? null : ("", "", diags.ToImmutableArray());
 
         bool hasNamespace = !service.ContainingNamespace.IsGlobalNamespace;
         string? ns = hasNamespace ? service.ContainingNamespace.ToDisplayString() : null;
@@ -85,7 +106,7 @@ public sealed class ServiceGenerator : IIncrementalGenerator
         if (hasNamespace) sb.AppendLine("}");
 
         string hint = (hasNamespace ? ns + "." : "") + service.Name + ".Service.g.cs";
-        return (hint, sb.ToString());
+        return (hint, sb.ToString(), diags.ToImmutableArray());
     }
 
     private static void EmitEvents(StringBuilder sb, INamedTypeSymbol service)
@@ -117,7 +138,7 @@ public sealed class ServiceGenerator : IIncrementalGenerator
         }
     }
 
-    private static void EmitRequests(StringBuilder sb, INamedTypeSymbol service)
+    private static void EmitRequests(StringBuilder sb, List<DiagInfo> diags, INamedTypeSymbol service)
     {
         foreach (var member in service.GetMembers())
         {
@@ -125,6 +146,14 @@ public sealed class ServiceGenerator : IIncrementalGenerator
             var attr = m.GetAttributes().FirstOrDefault(static a => a.AttributeClass?.ToDisplayString() == ServiceRequestAttr);
             if (attr is null) continue;
             if (m.IsGenericMethod || m.Parameters.Any(static p => p.RefKind != RefKind.None)) continue;
+
+            // A request carries a single optional context — more than one parameter is an error (SIM022). Skip
+            // emitting the caller for the malformed handler; the diagnostic is reported on the output side.
+            if (m.Parameters.Length > 1)
+            {
+                diags.Add(new DiagInfo(m.Name, m.Locations.FirstOrDefault() ?? Location.None));
+                continue;
+            }
 
             string requestName =
                 attr.ConstructorArguments.Length > 0 && attr.ConstructorArguments[0].Value is string n ? n

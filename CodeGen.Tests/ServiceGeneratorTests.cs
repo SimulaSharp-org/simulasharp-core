@@ -65,4 +65,36 @@ public sealed class ServiceGeneratorTests
             Assert.That(r.AllSource, Does.Contain("Site.InjectAsync(() => Handle_Compute(x))"));
         });
     }
+
+    [Test]
+    public void Zero_or_one_parameter_requests_do_not_trip_SIM022()
+    {
+        // The shared fixture has a zero-arg (DoIt) and a one-arg (Compute) request — both legal.
+        var r = GeneratorHarness.Run(new ServiceGenerator(), Service);
+        Assert.That(r.HasDiagnostic("SIM022"), Is.False);
+    }
+
+    [Test]
+    public void A_request_with_more_than_one_parameter_is_SIM022_and_is_not_emitted()
+    {
+        const string twoParam = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public partial class Svc : ServiceBase
+            {
+                public Svc(IClock c, ILogger l) : base(c, l, "Svc") { }
+                [ServiceRequest] protected int Handle_Compute(int x, double y) => x;
+            }
+            """;
+
+        var r = GeneratorHarness.Run(new ServiceGenerator(), twoParam);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.HasDiagnostic("SIM022"), Is.True, "a two-param request must be rejected");
+            Assert.That(r.AllSource, Does.Not.Contain("Compute("), "the malformed request must not generate a caller");
+        });
+    }
 }

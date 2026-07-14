@@ -16,7 +16,7 @@ namespace SimulaSharp.CodeGen;
 [Generator]
 public sealed class ReferenceGenerator : IIncrementalGenerator
 {
-    private const string ReferencesAttr = "SimulaSharp.Kernel.Attributes.ReferencesAttribute`1";
+    private const string ReferencesAttr = "SimulaSharp.Kernel.Attributes.CrossReferenceAttribute`1";
     private const string IReferenceFq = "global::SimulaSharp.Kernel.Primitives.IReference";
     private const string FillableFq = "global::SimulaSharp.Kernel.Primitives.FillableReference";
     private const string RefCollectionFq = "global::SimulaSharp.Kernel.Primitives.RefCollection";
@@ -40,7 +40,7 @@ public sealed class ReferenceGenerator : IIncrementalGenerator
     {
         if (ctx.TargetSymbol is not INamedTypeSymbol model) return null;
 
-        // (accessor name, fully-qualified Ref element type) per [References<T>("Name")] on this class.
+        // (accessor name, fully-qualified Ref element type) per [CrossReference<T>("Name")] on this class.
         var items = new List<(string Name, string RefType)>();
         foreach (var a in ctx.Attributes)
         {
