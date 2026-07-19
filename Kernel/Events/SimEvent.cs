@@ -6,8 +6,8 @@ using SimulaSharp.Kernel.Services;
 namespace SimulaSharp.Kernel.Events;
 
 /// <summary>
-/// The stock, logic-free global event (payload-less). Registration captures each subscriber's scheduler; a
-/// <see cref="Trigger"/> posts every handler onto its subscriber's own site. The subscriber identity itself is
+/// The stock, logic-free global event (payload-less). Registration records each handler against the scheduler it is to
+/// run on; a <see cref="Trigger"/> posts every handler onto that scheduler. The <c>subscriber</c> identity itself is
 /// unused — it is accepted only for uniformity with routing events. Because every <see cref="Register"/> runs
 /// synchronously at assembly time (before the run starts) and triggering only reads the subscriber list, no locking is
 /// needed.
@@ -17,7 +17,7 @@ public sealed class SimEvent : ISimEvent<IModel>
     private readonly List<(IScheduler Scheduler, Action Handler)> _subs = new();
 
     /// <inheritdoc/>
-    public void Register(IModel subscriber, Action handler) => _subs.Add((subscriber.Scheduler, handler));
+    public void Register(IModel subscriber, IScheduler subScheduler, Action handler) => _subs.Add((subScheduler, handler));
 
     /// <inheritdoc/>
     public void Trigger()
@@ -37,7 +37,7 @@ public sealed class SimEvent<T> : ISimEvent<IModel, T>
     private readonly List<(IScheduler Scheduler, Action<T> Handler)> _subs = new();
 
     /// <inheritdoc/>
-    public void Register(IModel subscriber, Action<T> handler) => _subs.Add((subscriber.Scheduler, handler));
+    public void Register(IModel subscriber, IScheduler subScheduler, Action<T> handler) => _subs.Add((subScheduler, handler));
 
     /// <inheritdoc/>
     public void Trigger(T arg)

@@ -144,7 +144,8 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         //     shared event. Registration is synchronous here — before the run — so the stock event needs no locking.
         foreach (var (modelVar, eventName, handler) in ctx.Subs)
             if (ctx.Events.TryGetValue(eventName, out var evtVar))
-                init.Append("        ").Append(evtVar).Append(".Register(").Append(modelVar).Append(", ").Append(modelVar).Append('.').Append(handler).AppendLine(");");
+                init.Append("        ").Append(evtVar).Append(".Register(").Append(modelVar).Append(", ").Append(modelVar)
+                    .Append(".Scheduler, ").Append(modelVar).Append('.').Append(handler).AppendLine(");");
         foreach (var (modelVar, eventName, member) in ctx.Trigs)
             if (ctx.Events.TryGetValue(eventName, out var evtVar))
                 init.Append("        ").Append(modelVar).Append('.').Append(member).Append(" = ").Append(evtVar).AppendLine(";");

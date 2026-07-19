@@ -40,7 +40,7 @@ public sealed class SimulatorGeneratorEventsTests
         public interface IBusNode : IModel { }
         public sealed class Bus : ISimEvent<IBusNode>
         {
-            public void Register(IBusNode subscriber, Action handler) { }
+            public void Register(IBusNode subscriber, IScheduler subScheduler, Action handler) { }
             public void Trigger() { }
         }
 
@@ -94,8 +94,8 @@ public sealed class SimulatorGeneratorEventsTests
         var r = Run(ValidYaml);
         Assert.Multiple(() =>
         {
-            Assert.That(r.AllSource, Does.Match(@"__c\d+\.Register\(__c\d+, __c\d+\.OnAbort\);"), "OnAbort registered on its event");
-            Assert.That(r.AllSource, Does.Match(@"__c\d+\.Register\(__c\d+, __c\d+\.OnPing\);"), "OnPing registered on its event");
+            Assert.That(r.AllSource, Does.Match(@"__c\d+\.Register\(__c\d+, __c\d+\.Scheduler, __c\d+\.OnAbort\);"), "OnAbort registered with its scheduler");
+            Assert.That(r.AllSource, Does.Match(@"__c\d+\.Register\(__c\d+, __c\d+\.Scheduler, __c\d+\.OnPing\);"), "OnPing registered with its scheduler");
             Assert.That(r.AllSource, Does.Match(@"__c\d+\.AbortOut = __c\d+;"), "AbortOut producer handle filled");
             Assert.That(r.AllSource, Does.Match(@"__c\d+\.PingOut = __c\d+;"), "PingOut producer handle filled");
         });

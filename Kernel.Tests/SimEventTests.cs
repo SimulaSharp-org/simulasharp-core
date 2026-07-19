@@ -45,8 +45,8 @@ public sealed class SimEventTests
         var schedB = new RecordingScheduler();
         int a = 0, b = 0;
         var evt = new SimEvent();
-        evt.Register(new SchedModel(schedA), () => a++);
-        evt.Register(new SchedModel(schedB), () => b++);
+        evt.Register(new SchedModel(schedA), schedA, () => a++);
+        evt.Register(new SchedModel(schedB), schedB, () => b++);
 
         ((ISimEventInvocator)evt).Trigger();
 
@@ -65,7 +65,7 @@ public sealed class SimEventTests
         var sched = new RecordingScheduler();
         int n = 0;
         var evt = new SimEvent();
-        evt.Register(new SchedModel(sched), () => n++);
+        evt.Register(new SchedModel(sched), sched, () => n++);
 
         ((ISimEventInvocator)evt).Trigger();
         ((ISimEventInvocator)evt).Trigger();
@@ -79,8 +79,8 @@ public sealed class SimEventTests
         var sched = new RecordingScheduler();
         double got1 = 0, got2 = 0;
         var evt = new SimEvent<double>();
-        evt.Register(new SchedModel(sched), v => got1 = v);
-        evt.Register(new SchedModel(sched), v => got2 = v);
+        evt.Register(new SchedModel(sched), sched, v => got1 = v);
+        evt.Register(new SchedModel(sched), sched, v => got2 = v);
 
         ((ISimEventInvocator<double>)evt).Trigger(42.5);
 
