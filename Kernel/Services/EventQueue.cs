@@ -1,3 +1,4 @@
+using SimulaSharp.Kernel.Logging;
 using SimulaSharp.Kernel.Primitives;
 
 namespace SimulaSharp.Kernel.Services;
@@ -53,6 +54,10 @@ public sealed class EventQueue
     private readonly Queue<int> _freeSlots;
     private readonly PriorityQueue<int, long> _pq;
 
+    /// <summary>The owning site's error channel: a scheduled entry that throws is logged here and dropped. Shared with
+    /// the <see cref="SimSite"/>. Null only for tests that construct a bare queue.</summary>
+    private readonly ILogger? _logger;
+
     /// <summary>
     /// Reusable buffer for the slots due in the current <see cref="ProcessDue"/> pass.
     /// Snapshotting the due set before executing gives correct "next pass" semantics:
@@ -69,8 +74,11 @@ public sealed class EventQueue
     public Action<int, int, Task>? OnAwait;
 
     /// <summary>Creates a queue that can hold at most <paramref name="maxCapacity"/> pending entries.</summary>
-    public EventQueue(int maxCapacity)
+    /// <param name="maxCapacity">Maximum pending entries.</param>
+    /// <param name="logger">The owning site's error channel; a throwing entry is logged here instead of being swallowed.</param>
+    public EventQueue(int maxCapacity, ILogger? logger = null)
     {
+        _logger = logger;
         _slots = new Slot[maxCapacity];
         _freeSlots = new Queue<int>(maxCapacity);
         _pq = new PriorityQueue<int, long>(maxCapacity);
@@ -230,11 +238,11 @@ public sealed class EventQueue
             // Nothing active (should not happen) — reclaim the slot defensively.
             FreeSlot(slot);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // A failing entry is dropped, never retried; its coroutine is disposed so
-            // no iterator resources leak. The slot is always reclaimed.
-            // TODO: route to a per-site error channel once one exists.
+            // A failing entry is dropped, never retried; its coroutine is disposed so no iterator resources leak, and
+            // the slot is always reclaimed. The failure is logged to the site's error channel rather than swallowed.
+            _logger?.LogError($"a scheduled entry threw and was dropped: {ex}");
             _slots[slot].Coroutine?.Dispose();
             FreeSlot(slot);
         }

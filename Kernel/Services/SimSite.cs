@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using SimulaSharp.Kernel.Logging;
 using SimulaSharp.Kernel.Primitives;
 
 namespace SimulaSharp.Kernel.Services;
@@ -40,6 +41,11 @@ public sealed class SimSite : IScheduler, IDispatcherSite, IHorizonWaiter
     private readonly IClock _clock;
     private readonly EventQueue _events;
 
+    /// <summary>The site's error channel — exceptions escaping posted work (event handlers, service-event callbacks,
+    /// marshalled ref calls) or a scheduled entry are isolated here and logged, rather than killing the site thread.
+    /// Shared with the <see cref="EventQueue"/>. Null only for tests that construct a bare site.</summary>
+    private readonly ILogger? _logger;
+
     /// <summary>Cross-thread work destined for this site's thread (lock-free).</summary>
     private readonly ConcurrentQueue<Action> _inbox = new();
 
@@ -69,12 +75,15 @@ public sealed class SimSite : IScheduler, IDispatcherSite, IHorizonWaiter
     /// <param name="name">Diagnostic name.</param>
     /// <param name="clock">The shared simulation clock.</param>
     /// <param name="maxEvents">Capacity of the site's event queue.</param>
-    public SimSite(string name, IClock clock, int maxEvents = 64)
+    /// <param name="logger">The site's error channel; a posted-work or scheduled-entry exception is logged here
+    /// instead of taking down the thread. Shared with the site's <see cref="EventQueue"/>.</param>
+    public SimSite(string name, IClock clock, int maxEvents = 64, ILogger? logger = null)
     {
         _name = name;
         _clock = clock;
+        _logger = logger;
         _wakeClock = clock as SimClock;   // enables precise clock-driven wakes (see IHorizonWaiter)
-        _events = new EventQueue(maxEvents);
+        _events = new EventQueue(maxEvents, logger);
 
         // When a coroutine awaits a task, resume it (on this thread, via the inbox) once
         // the task completes — re-arming at the then-current time so later delays are correct.
@@ -257,8 +266,13 @@ public sealed class SimSite : IScheduler, IDispatcherSite, IHorizonWaiter
                 continue;
             }
 
+            // Isolate posted work: an exception in a cross-site event handler, service-event callback or marshalled
+            // ref call is logged and dropped — it must not escape the run loop and take the whole site thread down.
             while (_inbox.TryDequeue(out var work))
-                work();
+            {
+                try { work(); }
+                catch (Exception ex) { _logger?.LogError($"posted work on site '{_name}' threw and was dropped: {ex}"); }
+            }
 
             _events.ProcessDue(_clock.SimNowUs);
 

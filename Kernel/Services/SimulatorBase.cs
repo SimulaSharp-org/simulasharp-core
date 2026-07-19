@@ -95,10 +95,11 @@ public abstract class SimulatorBase : ISimulator
 
     // ── Building blocks for the generated subclass ──────────────────────────────
 
-    /// <summary>Creates and registers a root SimSite (one per assembly <c>Sites[]</c> entry).</summary>
+    /// <summary>Creates and registers a root SimSite (one per assembly <c>Sites[]</c> entry). The site's error channel
+    /// (shared with its event queue) logs under the <c>SimulatorThreads.&lt;name&gt;</c> issuer.</summary>
     protected SimSite CreateSite(string name, int maxEvents = 64)
     {
-        var site = new SimSite(name, _clock, maxEvents);
+        var site = new SimSite(name, _clock, maxEvents, CreateLogger("SimulatorThreads." + name));
         _sites.Add(site);
         return site;
     }

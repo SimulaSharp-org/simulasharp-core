@@ -26,7 +26,8 @@ public abstract class ServiceBase : IService
     {
         TimeKeeper = timeKeeper;
         Logger = logger;
-        _site = new SimSite(name, timeKeeper, maxEvents);
+        // The service owns its site; its error channel logs under the service's own logger.
+        _site = new SimSite(name, timeKeeper, maxEvents, logger);
     }
 
     /// <inheritdoc/>

@@ -1,3 +1,4 @@
+using SimulaSharp.Kernel.Logging;
 using SimulaSharp.Kernel.Primitives;
 using SimulaSharp.Kernel.Services;
 using static SimulaSharp.Kernel.Tests.TestSupport;
@@ -189,6 +190,55 @@ public sealed class SimSiteTests
 
         Thread.Sleep(50);                  // clock is paused → site is parked
         Assert.That(Volatile.Read(ref n), Is.EqualTo(atPause), "work ran while the clock was paused");
+    }
+
+    /// <summary>Builds a started site + clock whose error channel logs to <paramref name="sink"/>.</summary>
+    private static (SimClock clock, SimSite site) NewRunningLogged(CapturingSink sink)
+    {
+        var clock = new SimClock(Epoch);
+        var site = new SimSite("test", clock, 64, new ComponentLogger("SimulatorThreads.test", clock, sink));
+        site.Start();
+        clock.Start();
+        return (clock, site);
+    }
+
+    [Test]
+    public void A_throwing_posted_handler_is_logged_and_does_not_kill_the_site()
+    {
+        var sink = new CapturingSink();
+        var (clock, site) = NewRunningLogged(sink);
+        using var _ = clock; using var __ = site;
+        int survived = 0;
+
+        site.Post(() => throw new InvalidOperationException("boom"));   // must be caught, not crash the site thread
+        site.Post(() => Volatile.Write(ref survived, 1));               // a subsequent post must still run
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(WaitUntil(() => Volatile.Read(ref survived) == 1), Is.True, "the site died after a throwing post");
+            Assert.That(sink.Entries.Any(e => e.Level == LogLevel.Error && e.Message.Contains("threw")), Is.True,
+                "the posted-work exception was not logged");
+        });
+    }
+
+    [Test]
+    public void A_throwing_scheduled_entry_is_logged_and_does_not_kill_the_site()
+    {
+        var sink = new CapturingSink();
+        var (clock, site) = NewRunningLogged(sink);
+        using var _ = clock; using var __ = site;
+        int ran = 0;
+
+        site.InjectVoidAsync(() => site.AddEvent(() => throw new InvalidOperationException("boom"), 10_000)).Wait();
+        site.InjectVoidAsync(() => site.AddEvent(() => Interlocked.Increment(ref ran), 20_000)).Wait();
+        clock.RunFor(40_000);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(WaitUntil(() => Volatile.Read(ref ran) == 1), Is.True, "the site stopped scheduling after a throwing entry");
+            Assert.That(sink.Entries.Any(e => e.Level == LogLevel.Error && e.Message.Contains("threw")), Is.True,
+                "the scheduled-entry exception was not logged");
+        });
     }
 
     [Test]
