@@ -6,7 +6,7 @@ The one package to reference when authoring a SimulaSharp simulation. It pulls i
 - **`SimulaSharp.CodeGen`** — the Roslyn analyzer/source-generator that turns your annotated models + a YAML *assembly* into a strongly-typed `<Name>Simulator`.
 
 ```xml
-<PackageReference Include="SimulaSharp" Version="0.3.0" />
+<PackageReference Include="SimulaSharp" Version="0.4.0" />
 ```
 
 SimulaSharp is a C#/.NET framework for building **hard-real-time, discrete-event simulations** as parallel actors: you

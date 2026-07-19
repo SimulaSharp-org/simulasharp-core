@@ -6,7 +6,7 @@
   machine-wide NuGet config), and point it at wherever the SimulaSharp packages live — a folder feed
   (as below), an internal NuGet server, GitHub Packages, etc. Then reference the one meta-package:
 
-      <PackageReference Include="SimulaSharp" Version="0.3.0" />
+      <PackageReference Include="SimulaSharp" Version="0.4.0" />
 
   That brings the Kernel runtime and the CodeGen analyzer/source-generator (transitively), so you can
   author models/services and declare a `<SimAssembly>` YAML that compiles into a strongly-typed simulator.
