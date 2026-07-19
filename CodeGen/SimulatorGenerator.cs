@@ -113,6 +113,15 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                 ctx.Deps.Add((v, kv.Key, kv.Value));
         }
 
+        // 1b. Global events — scheduler-less pub/sub channels. Instantiated up front (they depend on nothing) so the
+        //     later pass can register subscribers and fill producer handles; rooted via RegisterEvent for the run.
+        foreach (var evt in sim.Events ?? [])
+        {
+            string v = ctx.NextVar();
+            ctx.Events[evt.Name] = v;
+            init.Append("        var ").Append(v).Append(" = RegisterEvent(").Append(EventCtor(evt)).AppendLine(");");
+        }
+
         // 2. Sites + model trees
         foreach (var site in sim.Sites ?? [])
         {
@@ -129,6 +138,16 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             if (ctx.Services.TryGetValue(serviceName, out var svcVar))
                 init.Append("        ").Append(modelVar).Append('.').Append(member).Append(" = ").Append(svcVar).AppendLine(";");
         }
+
+        // 3b. Event wiring (after everything is constructed): register each [EventHandler] subscriber on its event
+        //     (the handler runs on the model's own site), and fill each [EventReference] producer handle with the
+        //     shared event. Registration is synchronous here — before the run — so the stock event needs no locking.
+        foreach (var (modelVar, eventName, handler) in ctx.Subs)
+            if (ctx.Events.TryGetValue(eventName, out var evtVar))
+                init.Append("        ").Append(evtVar).Append(".Register(").Append(modelVar).Append(", ").Append(modelVar).Append('.').Append(handler).AppendLine(");");
+        foreach (var (modelVar, eventName, member) in ctx.Trigs)
+            if (ctx.Events.TryGetValue(eventName, out var evtVar))
+                init.Append("        ").Append(modelVar).Append('.').Append(member).Append(" = ").Append(evtVar).AppendLine(";");
 
         // 4. Reference wiring (after everything is constructed). A cross-site [CrossReference<T>] is wired through a
         //    RefCollection of pre-wrapped target Refs (the simulator constructs each `new <ConcreteType>Ref(target)`
@@ -232,8 +251,24 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         foreach (var kv in entry)
             ctx.Refs.Add((v, siteVar, kv.Key, ctx.CrossReferenceElementType(node.Type, kv.Key), kv.Value ?? [], true));
 
+        // Event subscriptions / triggers, wired in the later pass. Each entry is { <member>: eventName }:
+        // Subscriptions bind an [EventHandler] method, Triggers an [EventReference] producer member.
+        foreach (var entry in node.Subscriptions ?? [])
+        foreach (var kv in entry)
+            ctx.Subs.Add((v, kv.Value, kv.Key));
+        foreach (var entry in node.Triggers ?? [])
+        foreach (var kv in entry)
+            ctx.Trigs.Add((v, kv.Value, kv.Key));
+
         return v;
     }
+
+    /// <summary>The constructor expression for a declared event: a custom <c>Type</c> if given, else the stock
+    /// <c>SimEvent&lt;ArgType&gt;</c> (payload) or <c>SimEvent</c> (argless).</summary>
+    private static string EventCtor(EventDesc evt) =>
+        !string.IsNullOrWhiteSpace(evt.Type) ? "new global::" + evt.Type + "()"
+        : !string.IsNullOrWhiteSpace(evt.ArgType) ? "new global::SimulaSharp.Kernel.Events.SimEvent<global::" + evt.ArgType + ">()"
+        : "new global::SimulaSharp.Kernel.Events.SimEvent()";
 
     private static void EmitConfig(StringBuilder sb, string target, Dictionary<string, string>? config)
     {
@@ -290,6 +325,12 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor UnknownConfigKey = D("SIM016", "Unknown config key", "Config key '{0}' has no matching [Parameter] member on '{1}'", DiagnosticSeverity.Warning);
     private static readonly DiagnosticDescriptor LocalRefCrossesSite = D("SIM017", "Intra-site reference crosses a site", "Intra-site reference '{0}' targets '{1}' on a different site — declare it as [CrossReference<T>] to cross sites");
     private static readonly DiagnosticDescriptor CrossRefNotInterface = D("SIM018", "Cross-reference target is not an interface", "Cross-reference '{0}' on model '{1}' must target an interface (a concrete type is not allowed for [CrossReference<T>])");
+    private static readonly DiagnosticDescriptor UnknownEvent = D("SIM023", "Unknown event", "'{0}' names unknown event '{1}' — declare it under the top-level 'Events:' block");
+    private static readonly DiagnosticDescriptor BadEventHandler = D("SIM024", "Invalid event handler", "Event handler '{0}' was not found on '{1}', is not [EventHandler], or is not a void method");
+    private static readonly DiagnosticDescriptor HandlerSignature = D("SIM025", "Handler signature mismatch", "Event handler '{0}' on '{1}' is incompatible with event '{2}' — expected {3}");
+    private static readonly DiagnosticDescriptor SubscriberKind = D("SIM026", "Wrong subscriber type", "Model '{0}' cannot subscribe to event '{1}': its type '{2}' is not assignable to the event's subscriber type '{3}'");
+    private static readonly DiagnosticDescriptor BadEventReference = D("SIM027", "Invalid event reference", "Trigger member '{0}' on '{1}' must be [EventReference] and typed as {2}");
+    private static readonly DiagnosticDescriptor BadEventType = D("SIM028", "Invalid event type", "Event '{0}': type '{1}' must implement ISimEvent<…> and match the declared ArgType");
 
     // ── Validator ───────────────────────────────────────────────────────────────
     private sealed class Validator
@@ -300,6 +341,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public bool HasErrors { get; private set; }
 
         private readonly INamedTypeSymbol? _iModel, _iService, _containsAttr, _referencesAttr, _localReferencesAttr, _configAttr, _serviceRefAttr, _iClock, _iScheduler, _iLogger;
+        private readonly INamedTypeSymbol? _eventHandlerAttr, _eventRefAttr, _iSimEvent1, _iSimEvent2, _iInvocator, _iInvocator1;
 
         public Validator(Compilation c, Location loc)
         {
@@ -315,6 +357,12 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             _iClock = c.GetTypeByMetadataName("SimulaSharp.Kernel.Services.IClock");
             _iScheduler = c.GetTypeByMetadataName("SimulaSharp.Kernel.Services.IScheduler");
             _iLogger = c.GetTypeByMetadataName("SimulaSharp.Kernel.Logging.ILogger");
+            _eventHandlerAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.EventHandlerAttribute");
+            _eventRefAttr = c.GetTypeByMetadataName("SimulaSharp.Kernel.Attributes.EventReferenceAttribute");
+            _iSimEvent1 = c.GetTypeByMetadataName("SimulaSharp.Kernel.Events.ISimEvent`1");
+            _iSimEvent2 = c.GetTypeByMetadataName("SimulaSharp.Kernel.Events.ISimEvent`2");
+            _iInvocator = c.GetTypeByMetadataName("SimulaSharp.Kernel.Events.ISimEventInvocator");
+            _iInvocator1 = c.GetTypeByMetadataName("SimulaSharp.Kernel.Events.ISimEventInvocator`1");
         }
 
         private void Report(DiagnosticDescriptor d, params object[] args)
@@ -342,12 +390,17 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                         foreach (var kv in entry)
                             CheckDep(holder, kv.Key, kv.Value, services);
 
+            // Global events, resolved up front so Subscriptions/Triggers can be checked against each event's shape.
+            var events = new Dictionary<string, EventInfo>();
+            foreach (var evt in sim.Events ?? [])
+                if (ResolveEvent(evt) is { } info && !events.ContainsKey(evt.Name)) events[evt.Name] = info;
+
             var paths = new Dictionary<string, INamedTypeSymbol>();
             var sitesByPath = new Dictionary<string, string>();
             var pendingRefs = new List<(string Field, ITypeSymbol? Elem, string Path, bool IsCross, string RefSite)>();
             foreach (var site in sim.Sites ?? [])
                 foreach (var root in site.Models ?? [])
-                    WalkModel(root, simName, site.Name, services, paths, sitesByPath, pendingRefs, containedPath: null);
+                    WalkModel(root, simName, site.Name, services, events, paths, sitesByPath, pendingRefs, containedPath: null);
 
             foreach (var (field, elem, target, isCross, refSite) in pendingRefs)
             {
@@ -360,7 +413,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         }
 
         private INamedTypeSymbol? WalkModel(ModelNode node, string prefix, string siteName, Dictionary<string, INamedTypeSymbol> services,
-            Dictionary<string, INamedTypeSymbol> paths, Dictionary<string, string> sitesByPath,
+            Dictionary<string, EventInfo> events, Dictionary<string, INamedTypeSymbol> paths, Dictionary<string, string> sitesByPath,
             List<(string, ITypeSymbol?, string, bool, string)> pendingRefs, string? containedPath)
         {
             string full = prefix + "." + node.Name;
@@ -376,6 +429,14 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                 foreach (var kv in entry)
                     CheckDep(type, kv.Key, kv.Value, services);
 
+            // Event wiring: Subscriptions bind an [EventHandler] method, Triggers an [EventReference] producer member.
+            foreach (var entry in node.Subscriptions ?? [])
+                foreach (var kv in entry)
+                    CheckSubscription(type, node.Name, kv.Key, kv.Value, events);
+            foreach (var entry in node.Triggers ?? [])
+                foreach (var kv in entry)
+                    CheckTrigger(type, kv.Key, kv.Value, events);
+
             // Containment: each entry is { <containerName>: [children] }. The container is declared by a
             // [Contains<T>("containerName")] attribute on the model (not a field); its element type is T.
             foreach (var entry in node.Models ?? [])
@@ -386,7 +447,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                     foreach (var child in kv.Value ?? [])
                     {
                         string childFull = full + "." + child.Name;
-                        var childType = WalkModel(child, full, siteName, services, paths, sitesByPath, pendingRefs, childFull);
+                        var childType = WalkModel(child, full, siteName, services, events, paths, sitesByPath, pendingRefs, childFull);
                         // Assignability (SIM008) only matters once we know the child IS a model — a non-model
                         // child already reported SIM009 in its own WalkModel, so don't pile a second error on.
                         if (elem is not null && childType is not null
@@ -459,6 +520,116 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             if (m is null || !HasAttr(m, _serviceRefAttr)) Report(BadServiceRef, member, holderType.Name);
             else if (!services.TryGetValue(targetService, out var svcType)) Report(UnknownService, member, targetService);
             else if (MemberType(m) is { } mt && !Assignable(svcType, mt)) Report(ServiceMismatch, targetService, member);
+        }
+
+        // ── Events ──────────────────────────────────────────────────────────────
+
+        /// <summary>A resolved event's shape: its subscriber constraint (<c>TSub</c>), its payload (<c>null</c> when
+        /// argless), and whether it carries a payload.</summary>
+        private sealed class EventInfo
+        {
+            public ITypeSymbol? Sub;
+            public ITypeSymbol? Payload;
+            public bool Typed;
+        }
+
+        /// <summary>Resolves a declared event to its <see cref="EventInfo"/>, reporting SIM028 when the custom
+        /// <c>Type</c> doesn't implement <c>ISimEvent&lt;…&gt;</c> or disagrees with the declared <c>ArgType</c>. A
+        /// stock event (no <c>Type</c>) has subscriber <c>IModel</c> and payload = <c>ArgType</c> (or none).</summary>
+        private EventInfo? ResolveEvent(EventDesc evt)
+        {
+            ITypeSymbol? argType = null;
+            if (!string.IsNullOrWhiteSpace(evt.ArgType))
+            {
+                argType = _c.GetTypeByMetadataName(evt.ArgType!);
+                if (argType is null) { Report(BadEventType, evt.Name, evt.ArgType!); return null; }
+            }
+
+            if (!string.IsNullOrWhiteSpace(evt.Type))
+            {
+                var et = _c.GetTypeByMetadataName(evt.Type!);
+                if (et is null) { Report(BadEventType, evt.Name, evt.Type!); return null; }
+                var (sub, payload, ok) = SimEventShape(et);
+                // The type must be an ISimEvent; if an ArgType was also declared, the type's payload must match it.
+                if (!ok || (argType is not null && (payload is null || !SymbolEqualityComparer.Default.Equals(payload, argType))))
+                {
+                    Report(BadEventType, evt.Name, evt.Type!);
+                    return null;
+                }
+                return new EventInfo { Sub = sub, Payload = payload, Typed = payload is not null };
+            }
+
+            return new EventInfo { Sub = _iModel, Payload = argType, Typed = argType is not null };
+        }
+
+        /// <summary>The <c>(TSub, payload)</c> of the <c>ISimEvent&lt;TSub[,T]&gt;</c> that <paramref name="et"/>
+        /// implements — payload null for the argless form; <c>ok</c> false if it implements neither.</summary>
+        private (ITypeSymbol? Sub, ITypeSymbol? Payload, bool Ok) SimEventShape(INamedTypeSymbol et)
+        {
+            foreach (var i in et.AllInterfaces)
+                if (SymbolEqualityComparer.Default.Equals(i.OriginalDefinition, _iSimEvent2))
+                    return (i.TypeArguments[0], i.TypeArguments[1], true);
+            foreach (var i in et.AllInterfaces)
+                if (SymbolEqualityComparer.Default.Equals(i.OriginalDefinition, _iSimEvent1))
+                    return (i.TypeArguments[0], null, true);
+            return (null, null, false);
+        }
+
+        /// <summary>Validates one <c>Subscriptions</c> entry: a known event, an <c>[EventHandler]</c> void method whose
+        /// signature fits the event's payload, and a subscriber assignable to the event's <c>TSub</c>.</summary>
+        private void CheckSubscription(INamedTypeSymbol holderType, string instance, string handler, string eventName,
+            Dictionary<string, EventInfo> events)
+        {
+            if (!events.TryGetValue(eventName, out var info)) { Report(UnknownEvent, handler, eventName); return; }
+
+            var m = FindMethod(holderType, handler);
+            if (m is null || !HasAttr(m, _eventHandlerAttr) || !m.ReturnsVoid) { Report(BadEventHandler, handler, holderType.Name); return; }
+
+            if (!info.Typed)
+            {
+                if (m.Parameters.Length != 0) Report(HandlerSignature, handler, holderType.Name, eventName, "no parameters");
+            }
+            else if (m.Parameters.Length != 1 || (info.Payload is not null && !Assignable(info.Payload, m.Parameters[0].Type)))
+            {
+                Report(HandlerSignature, handler, holderType.Name, eventName, "a single parameter of '" + info.Payload?.ToDisplayString() + "'");
+            }
+
+            if (info.Sub is not null && !Assignable(holderType, info.Sub))
+                Report(SubscriberKind, instance, eventName, holderType.ToDisplayString(), info.Sub.ToDisplayString());
+        }
+
+        /// <summary>Validates one <c>Triggers</c> entry: a known event and an <c>[EventReference]</c> member typed as the
+        /// matching trigger-only invocator (<c>ISimEventInvocator</c> / <c>ISimEventInvocator&lt;T&gt;</c>).</summary>
+        private void CheckTrigger(INamedTypeSymbol holderType, string member, string eventName, Dictionary<string, EventInfo> events)
+        {
+            if (!events.TryGetValue(eventName, out var info)) { Report(UnknownEvent, member, eventName); return; }
+
+            var m = FindMember(holderType, member);
+            var mt = MemberType(m) as INamedTypeSymbol;
+            INamedTypeSymbol? expected = info.Typed
+                ? (info.Payload is not null ? _iInvocator1?.Construct(info.Payload) : null)
+                : _iInvocator;
+            // The member must be an invocator interface (trigger-only) the shared event can be assigned to.
+            bool ok = m is not null && HasAttr(m, _eventRefAttr) && mt is not null && expected is not null
+                      && IsInvocator(mt) && Assignable(expected, mt);
+            if (!ok) Report(BadEventReference, member, holderType.Name, ExpectedInvocator(info));
+        }
+
+        private bool IsInvocator(INamedTypeSymbol t) =>
+            SymbolEqualityComparer.Default.Equals(t, _iInvocator)
+            || SymbolEqualityComparer.Default.Equals(t.OriginalDefinition, _iInvocator1);
+
+        private static string ExpectedInvocator(EventInfo info) =>
+            info.Typed ? "ISimEventInvocator<" + (info.Payload?.ToDisplayString() ?? "T") + ">" : "ISimEventInvocator";
+
+        private static IMethodSymbol? FindMethod(INamedTypeSymbol type, string name)
+        {
+            for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
+            {
+                var m = t.GetMembers(name).OfType<IMethodSymbol>().FirstOrDefault(static x => x.MethodKind == MethodKind.Ordinary);
+                if (m is not null) return m;
+            }
+            return null;
         }
 
         private INamedTypeSymbol? ResolveType(string typeName, string instance, bool service, string? containedPath = null)
@@ -538,6 +709,10 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         private int _n;
         public string NextVar() => "__c" + _n++;
         public readonly Dictionary<string, string> Services = new();
+        public readonly Dictionary<string, string> Events = new();               // event name → var
+        // Event wiring, bound after all models exist: (referrer var, event name, [EventHandler] method / [EventReference] member)
+        public readonly List<(string ModelVar, string EventName, string Handler)> Subs = new();
+        public readonly List<(string ModelVar, string EventName, string Member)> Trigs = new();
         public readonly Dictionary<string, string> ModelsByPath = new();
         public readonly Dictionary<string, string> TypesByPath = new();
         public readonly Dictionary<string, string> SiteVarByPath = new();   // path → the site (scheduler) var it runs on
@@ -587,7 +762,15 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public string? Name { get; set; }
         public string? MissionStart { get; set; }
         public List<ServiceDesc>? Services { get; set; }
+        public List<EventDesc>? Events { get; set; }                             // global pub/sub events
         public List<SiteDesc>? Sites { get; set; }
+    }
+
+    private sealed class EventDesc
+    {
+        public string Name { get; set; } = "";
+        public string? ArgType { get; set; }                                     // payload type; omit for an argless event
+        public string? Type { get; set; }                                        // custom ISimEvent<…>; default SimEvent[<ArgType>]
     }
 
     private sealed class ServiceDesc
@@ -614,5 +797,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public List<Dictionary<string, List<string>>>? Refs { get; set; }        // intra-site [Reference<T>]
         public List<Dictionary<string, List<string>>>? CRefs { get; set; }       // cross-site [CrossReference<T>]
         public List<Dictionary<string, string>>? Deps { get; set; }              // service deps
+        public List<Dictionary<string, string>>? Subscriptions { get; set; }     // { [EventHandler] method: eventName }
+        public List<Dictionary<string, string>>? Triggers { get; set; }          // { [EventReference] member: eventName }
     }
 }
