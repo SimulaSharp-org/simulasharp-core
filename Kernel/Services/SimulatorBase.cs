@@ -26,6 +26,7 @@ public abstract class SimulatorBase : ISimulator
     private readonly List<ISite> _sites = [];
     private readonly List<IModel> _models = [];
     private readonly List<IService> _services = [];
+    private readonly List<object> _events = [];   // global events — rooted for the run's lifetime (see RegisterEvent)
     private readonly List<Knob> _knobs = [];
     private readonly List<IKnobChannel> _knobChannels = [];
     private readonly Dictionary<string, Plottable> _plottables = [];
@@ -157,6 +158,17 @@ public abstract class SimulatorBase : ISimulator
         _services.Add(service);
         _sites.Add(service.Site);
         return service;
+    }
+
+    /// <summary>
+    /// Roots a global event (an <see cref="SimulaSharp.Kernel.Events.ISimEvent{TSub}"/> instance) for the simulation's
+    /// lifetime. Events have no site or lifecycle of their own — they are passive fan-out channels — but must stay
+    /// reachable while producers (<c>[EventReference]</c>) and subscribers hold them, hence this anchor.
+    /// </summary>
+    protected T RegisterEvent<T>(T @event) where T : class
+    {
+        _events.Add(@event);
+        return @event;
     }
 
     /// <summary>
