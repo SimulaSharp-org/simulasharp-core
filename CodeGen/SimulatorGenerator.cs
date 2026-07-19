@@ -111,6 +111,15 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             foreach (var entry in svc.Deps ?? [])
             foreach (var kv in entry)
                 ctx.Deps.Add((v, kv.Key, kv.Value));
+
+            // A service subscribes/triggers just like a model — but its public dispatch surface is `Site` (an
+            // IDispatcherSite), not the model-only `Scheduler`.
+            foreach (var entry in svc.Subscriptions ?? [])
+            foreach (var kv in entry)
+                ctx.Subs.Add((v, "Site", kv.Value, kv.Key));
+            foreach (var entry in svc.Triggers ?? [])
+            foreach (var kv in entry)
+                ctx.Trigs.Add((v, kv.Value, kv.Key));
         }
 
         // 1b. Global events — scheduler-less pub/sub channels. Instantiated up front (they depend on nothing) so the
@@ -142,10 +151,10 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         // 3b. Event wiring (after everything is constructed): register each [EventHandler] subscriber on its event
         //     (the handler runs on the model's own site), and fill each [EventReference] producer handle with the
         //     shared event. Registration is synchronous here — before the run — so the stock event needs no locking.
-        foreach (var (modelVar, eventName, handler) in ctx.Subs)
+        foreach (var (subVar, dispatcher, eventName, handler) in ctx.Subs)
             if (ctx.Events.TryGetValue(eventName, out var evtVar))
-                init.Append("        ").Append(evtVar).Append(".Register(").Append(modelVar).Append(", ").Append(modelVar)
-                    .Append(".Scheduler, ").Append(modelVar).Append('.').Append(handler).AppendLine(");");
+                init.Append("        ").Append(evtVar).Append(".Register(").Append(subVar).Append(", ").Append(subVar)
+                    .Append('.').Append(dispatcher).Append(", ").Append(subVar).Append('.').Append(handler).AppendLine(");");
         foreach (var (modelVar, eventName, member) in ctx.Trigs)
             if (ctx.Events.TryGetValue(eventName, out var evtVar))
                 init.Append("        ").Append(modelVar).Append('.').Append(member).Append(" = ").Append(evtVar).AppendLine(";");
@@ -256,7 +265,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         // Subscriptions bind an [EventHandler] method, Triggers an [EventReference] producer member.
         foreach (var entry in node.Subscriptions ?? [])
         foreach (var kv in entry)
-            ctx.Subs.Add((v, kv.Value, kv.Key));
+            ctx.Subs.Add((v, "Scheduler", kv.Value, kv.Key));   // a model dispatches on its own IScheduler
         foreach (var entry in node.Triggers ?? [])
         foreach (var kv in entry)
             ctx.Trigs.Add((v, kv.Value, kv.Key));
@@ -395,6 +404,18 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             var events = new Dictionary<string, EventInfo>();
             foreach (var evt in sim.Events ?? [])
                 if (ResolveEvent(evt) is { } info && !events.ContainsKey(evt.Name)) events[evt.Name] = info;
+
+            // Services subscribe/trigger too — validated once the event table exists.
+            foreach (var svc in sim.Services ?? [])
+                if (services.TryGetValue(svc.Name, out var svcType))
+                {
+                    foreach (var entry in svc.Subscriptions ?? [])
+                        foreach (var kv in entry)
+                            CheckSubscription(svcType, svc.Name, kv.Key, kv.Value, events);
+                    foreach (var entry in svc.Triggers ?? [])
+                        foreach (var kv in entry)
+                            CheckTrigger(svcType, kv.Key, kv.Value, events);
+                }
 
             var paths = new Dictionary<string, INamedTypeSymbol>();
             var sitesByPath = new Dictionary<string, string>();
@@ -560,7 +581,8 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                 return new EventInfo { Sub = sub, Payload = payload, Typed = payload is not null };
             }
 
-            return new EventInfo { Sub = _iModel, Payload = argType, Typed = argType is not null };
+            // A stock event (no custom Type) accepts any subscriber — its TSub is object.
+            return new EventInfo { Sub = _c.ObjectType, Payload = argType, Typed = argType is not null };
         }
 
         /// <summary>The <c>(TSub, payload)</c> of the <c>ISimEvent&lt;TSub[,T]&gt;</c> that <paramref name="et"/>
@@ -711,9 +733,10 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public string NextVar() => "__c" + _n++;
         public readonly Dictionary<string, string> Services = new();
         public readonly Dictionary<string, string> Events = new();               // event name → var
-        // Event wiring, bound after all models exist: (referrer var, event name, [EventHandler] method / [EventReference] member)
-        public readonly List<(string ModelVar, string EventName, string Handler)> Subs = new();
-        public readonly List<(string ModelVar, string EventName, string Member)> Trigs = new();
+        // Event wiring, bound after all models/services exist. A subscriber's dispatcher accessor differs by kind:
+        // a model exposes `Scheduler`, a service (its public surface) exposes `Site` — both IDispatcher.
+        public readonly List<(string SubVar, string Dispatcher, string EventName, string Handler)> Subs = new();
+        public readonly List<(string SubVar, string EventName, string Member)> Trigs = new();
         public readonly Dictionary<string, string> ModelsByPath = new();
         public readonly Dictionary<string, string> TypesByPath = new();
         public readonly Dictionary<string, string> SiteVarByPath = new();   // path → the site (scheduler) var it runs on
@@ -780,6 +803,8 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         public string Type { get; set; } = "";
         public Dictionary<string, string>? Config { get; set; }
         public List<Dictionary<string, string>>? Deps { get; set; }              // service→service deps
+        public List<Dictionary<string, string>>? Subscriptions { get; set; }     // { [EventHandler] method: eventName }
+        public List<Dictionary<string, string>>? Triggers { get; set; }          // { [EventReference] member: eventName }
     }
 
     private sealed class SiteDesc

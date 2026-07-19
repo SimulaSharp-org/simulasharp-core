@@ -36,11 +36,19 @@ public sealed class SimulatorGeneratorEventsTests
             [EventReference] public ISimEventInvocator PingOut { get; set; } = null!;
         }
 
-        // A custom routing event that only IBusNode models may subscribe to.
+        // A service that both subscribes to and produces the "Abort" event (services aren't IModel).
+        public sealed class Watcher : ServiceBase
+        {
+            public Watcher(IClock c, ILogger l) : base(c, l, "Watcher") { }
+            [EventHandler] public void OnAbort(AbortInfo info) { }
+            [EventReference] public ISimEventInvocator<AbortInfo> AbortOut { get; set; } = null!;
+        }
+
+        // A custom routing event that only IBusNode subscribers may subscribe to.
         public interface IBusNode : IModel { }
         public sealed class Bus : ISimEvent<IBusNode>
         {
-            public void Register(IBusNode subscriber, IScheduler subScheduler, Action handler) { }
+            public void Register(IBusNode subscriber, IDispatcher subDispatcher, Action handler) { }
             public void Trigger() { }
         }
 
@@ -99,6 +107,39 @@ public sealed class SimulatorGeneratorEventsTests
             Assert.That(r.AllSource, Does.Match(@"__c\d+\.AbortOut = __c\d+;"), "AbortOut producer handle filled");
             Assert.That(r.AllSource, Does.Match(@"__c\d+\.PingOut = __c\d+;"), "PingOut producer handle filled");
         });
+    }
+
+    [Test]
+    public void A_service_subscribes_via_its_site_and_produces_events()
+    {
+        const string yaml = """
+            Simulator:
+              Name: Sig
+              Services:
+                - Name: Watcher
+                  Type: Demo.Watcher
+                  Subscriptions:
+                    - OnAbort: Abort
+                  Triggers:
+                    - AbortOut: Abort
+              Events:
+                - Name: Abort
+                  ArgType: Demo.AbortInfo
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: Nav
+                      Type: Demo.Nav
+            """;
+        var r = Run(yaml);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Diagnostics, Is.Empty, "reported: " + string.Join(",", r.Ids));
+            // A service dispatches on its public Site (an IDispatcherSite), not the model-only Scheduler.
+            Assert.That(r.AllSource, Does.Match(@"__c\d+\.Register\(__c\d+, __c\d+\.Site, __c\d+\.OnAbort\);"), "service subscribes via .Site");
+            Assert.That(r.AllSource, Does.Match(@"__c\d+\.AbortOut = __c\d+;"), "service producer handle filled");
+        });
+        Assert.That(GeneratorHarness.CompileWithAllGenerators(World, yaml), Is.Empty, "service event wiring did not compile");
     }
 
     [Test]

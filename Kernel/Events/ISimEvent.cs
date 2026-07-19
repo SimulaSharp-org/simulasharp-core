@@ -17,25 +17,26 @@ namespace SimulaSharp.Kernel.Events;
 /// owns its own synchronization.
 /// </para>
 /// </summary>
-/// <typeparam name="TSub">The subscriber identity a custom event may key on (routing); constrained to <see cref="IModel"/>.</typeparam>
-public interface ISimEvent<in TSub> : ISimEventInvocator where TSub : IModel
+/// <typeparam name="TSub">The subscriber identity a custom event may key on (routing) — unconstrained; a subscriber
+/// may be a model or a service. The stock <see cref="SimEvent"/> uses <c>object</c> and ignores it.</typeparam>
+public interface ISimEvent<in TSub> : ISimEventInvocator
 {
     /// <summary>Registers <paramref name="handler"/> for <paramref name="subscriber"/>, to be posted onto
-    /// <paramref name="subScheduler"/> when the event fires. The identity and the target scheduler are separate:
-    /// the stock event ignores <paramref name="subscriber"/> and posts to <paramref name="subScheduler"/>, while a
-    /// routing event may key on the identity and choose a different scheduler. Called by the simulator during assembly.</summary>
-    void Register(TSub subscriber, IScheduler subScheduler, Action handler);
+    /// <paramref name="subDispatcher"/> when the event fires. Identity and dispatch target are separate: the stock event
+    /// ignores <paramref name="subscriber"/> and posts to <paramref name="subDispatcher"/> (the subscriber's own site),
+    /// while a routing event may key on the identity and choose a different dispatcher. Called at assembly time.</summary>
+    void Register(TSub subscriber, IDispatcher subDispatcher, Action handler);
 }
 
 /// <summary>
 /// A global, scheduler-less pub/sub event carrying a payload of type <typeparamref name="T"/>. See
 /// <see cref="ISimEvent{TSub}"/>.
 /// </summary>
-/// <typeparam name="TSub">The subscriber identity a custom event may key on (routing); constrained to <see cref="IModel"/>.</typeparam>
+/// <typeparam name="TSub">The subscriber identity a custom event may key on (routing) — unconstrained.</typeparam>
 /// <typeparam name="T">The event payload type.</typeparam>
-public interface ISimEvent<in TSub, T> : ISimEventInvocator<T> where TSub : IModel
+public interface ISimEvent<in TSub, T> : ISimEventInvocator<T>
 {
     /// <summary>Registers <paramref name="handler"/> for <paramref name="subscriber"/>, to be posted (with the payload)
-    /// onto <paramref name="subScheduler"/> when the event fires. See <see cref="ISimEvent{TSub}.Register"/>.</summary>
-    void Register(TSub subscriber, IScheduler subScheduler, Action<T> handler);
+    /// onto <paramref name="subDispatcher"/> when the event fires. See <see cref="ISimEvent{TSub}.Register"/>.</summary>
+    void Register(TSub subscriber, IDispatcher subDispatcher, Action<T> handler);
 }
