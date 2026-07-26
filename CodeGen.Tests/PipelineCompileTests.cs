@@ -30,7 +30,7 @@ public sealed class PipelineCompileTests
                 [Triggerable] void SetBudget(double w);
             }
 
-            public sealed class Panel : ModelBase, IPowerSource
+            public sealed partial class Panel : ModelBase, IPowerSource
             {
                 public Panel(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
                 public double AvailableW => 42.0;
@@ -87,7 +87,7 @@ public sealed class PipelineCompileTests
             using SimulaSharp.Kernel.Services;
             namespace Demo;
 
-            public sealed class Wheel : ModelBase
+            public sealed partial class Wheel : ModelBase
             {
                 public Wheel(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
                 public int Rpm { get; set; }
@@ -116,6 +116,38 @@ public sealed class PipelineCompileTests
                             - { Name: W1, Type: Demo.Wheel }
                       Refs:
                         - Spare: [ Garage.Car.W0 ]
+            """;
+
+        var errors = GeneratorHarness.CompileWithAllGenerators(source, yaml);
+        Assert.That(errors, Is.Empty, "generated code did not compile:\n" + string.Join("\n", errors));
+    }
+
+    [Test]
+    public void A_defaulted_parameter_model_compiles_without_a_config_block()
+    {
+        // A model with a [Parameter] default and NO Config: block must compile end to end: the parameter
+        // generator emits __ApplyParameters, and the simulator calls it unconditionally so the default is stamped.
+        const string source = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+
+            public partial class Tank : ModelBase
+            {
+                public Tank(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+                [Parameter(42)] public int Capacity { get; set; }
+            }
+            """;
+        const string yaml = """
+            Simulator:
+              Name: Depot
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: Tank
+                      Type: Demo.Tank
             """;
 
         var errors = GeneratorHarness.CompileWithAllGenerators(source, yaml);

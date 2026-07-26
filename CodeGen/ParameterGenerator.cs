@@ -31,6 +31,11 @@ public sealed class ParameterGenerator : IIncrementalGenerator
 
     private static readonly SymbolDisplayFormat Fq = SymbolDisplayFormat.FullyQualifiedFormat;
 
+    private static readonly DiagnosticDescriptor MustBePartial = new("SIM029",
+        "Model or service must be partial",
+        "'{0}' implements {1} and must be declared 'partial' so the framework can generate its code",
+        "SimulaSharp.Assembly", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
     /// <inheritdoc/>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -42,6 +47,20 @@ public sealed class ParameterGenerator : IIncrementalGenerator
             .Select(static (g, _) => g!.Value);
 
         context.RegisterSourceOutput(components, static (spc, g) => spc.AddSource(g.HintName, g.Source));
+
+        // Every model/service must be `partial`: the generated simulator calls the generated __ApplyParameters on
+        // each one unconditionally (so attribute defaults apply even with no Config block), which means the method
+        // must exist. A non-partial model/service could never receive one, so flag it directly (SIM029) rather
+        // than letting it surface downstream as an opaque "no definition for __ApplyParameters".
+        var nonPartial = context.SyntaxProvider
+            .CreateSyntaxProvider(
+                predicate: static (node, _) => node is ClassDeclarationSyntax c && !c.Modifiers.Any(SyntaxKind.PartialKeyword),
+                transform: static (ctx, _) => PartialViolation(ctx))
+            .Where(static v => v is not null)
+            .Select(static (v, _) => v!.Value);
+
+        context.RegisterSourceOutput(nonPartial, static (spc, v) =>
+            spc.ReportDiagnostic(Diagnostic.Create(MustBePartial, v.Location, v.Name, v.Kind)));
     }
 
     private readonly struct Param(ISymbol member, ITypeSymbol type, string key, bool required, TypedConstant? deflt, string convert)
@@ -65,22 +84,13 @@ public sealed class ParameterGenerator : IIncrementalGenerator
         var first = type.DeclaringSyntaxReferences.FirstOrDefault();
         if (first is null || first.GetSyntax() != ctx.Node) return null;
 
-        var ps = new List<Param>();
-        foreach (var member in type.GetMembers())
-        {
-            var attr = member.GetAttributes().FirstOrDefault(static a => a.AttributeClass?.ToDisplayString() == ParamAttr);
-            if (attr is null) continue;
-            if (!Settable(member, out var mt)) continue;            // skip get-only/init/readonly/const
-            string convert = ConvertExpr(mt, "__value");
-            if (convert.Length == 0) continue;                       // skip unsupported (non-value) types
+        var ps = CollectParams(type);
 
-            string key = Named(attr, "Key") as string ?? member.Name;
-            bool required = Named(attr, "Required") is true;
-            TypedConstant? deflt = attr.ConstructorArguments.Length > 0 && attr.ConstructorArguments[0].Value is not null
-                ? attr.ConstructorArguments[0] : null;
-            ps.Add(new Param(member, mt, key, required, deflt, convert));
-        }
-        if (ps.Count == 0) return null;
+        // Emit a (possibly empty) parameter provider so the simulator's unconditional __ApplyParameters call
+        // always resolves. The single exception: a parameterless type whose base already declares [Parameter]s
+        // inherits the base's generated provider — re-emitting an empty pair here would shadow it and silently
+        // drop the base's defaults, so emit nothing and let the inherited members stand.
+        if (ps.Count == 0 && BaseChainHasParams(type)) return null;
 
         bool hasNamespace = !type.ContainingNamespace.IsGlobalNamespace;
         string? ns = hasNamespace ? type.ContainingNamespace.ToDisplayString() : null;
@@ -108,6 +118,61 @@ public sealed class ParameterGenerator : IIncrementalGenerator
 
         string hint = (hasNamespace ? ns + "." : "") + type.Name + ".Parameters.g.cs";
         return (hint, sb.ToString());
+    }
+
+    /// <summary>The <c>[Parameter]</c>-annotated, settable, convertible members declared directly on <paramref name="type"/>.</summary>
+    private static List<Param> CollectParams(INamedTypeSymbol type)
+    {
+        var ps = new List<Param>();
+        foreach (var member in type.GetMembers())
+        {
+            var attr = member.GetAttributes().FirstOrDefault(static a => a.AttributeClass?.ToDisplayString() == ParamAttr);
+            if (attr is null) continue;
+            if (!Settable(member, out var mt)) continue;            // skip get-only/init/readonly/const
+            string convert = ConvertExpr(mt, "__value");
+            if (convert.Length == 0) continue;                       // skip unsupported (non-value) types
+
+            string key = Named(attr, "Key") as string ?? member.Name;
+            bool required = Named(attr, "Required") is true;
+            TypedConstant? deflt = attr.ConstructorArguments.Length > 0 && attr.ConstructorArguments[0].Value is not null
+                ? attr.ConstructorArguments[0] : null;
+            ps.Add(new Param(member, mt, key, required, deflt, convert));
+        }
+        return ps;
+    }
+
+    /// <summary>True if any base type in the chain declares a generatable <c>[Parameter]</c> member — so this type
+    /// inherits a generated <c>__ApplyParameters</c> and must not shadow it with an empty one.</summary>
+    private static bool BaseChainHasParams(INamedTypeSymbol type)
+    {
+        for (INamedTypeSymbol? b = type.BaseType; b is not null; b = b.BaseType)
+            if (CollectParams(b).Count > 0) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// For a non-partial class, reports whether it implements <c>IModel</c>/<c>IService</c> (and therefore must be
+    /// <c>partial</c>). The framework's own base classes implement those contracts but are hand-written and need no
+    /// generation, so they are excluded. Returns the identifier location, the type name, and the contract's name.
+    /// </summary>
+    private static (Location Location, string Name, string Kind)? PartialViolation(GeneratorSyntaxContext ctx)
+    {
+        var decl = (ClassDeclarationSyntax)ctx.Node;
+        if (ctx.SemanticModel.GetDeclaredSymbol(decl) is not INamedTypeSymbol type) return null;
+
+        switch (type.ToDisplayString())
+        {
+            case "SimulaSharp.Kernel.Model.ModelBase":
+            case "SimulaSharp.Kernel.Model.ServiceBase":
+            case "SimulaSharp.Kernel.Model.LooselyCoupledServiceBase":
+                return null;
+        }
+
+        bool isService = type.AllInterfaces.Any(static i => i.ToDisplayString() == IServiceFullName);
+        bool isModel = type.AllInterfaces.Any(static i => i.ToDisplayString() == IModelFullName);
+        if (!isModel && !isService) return null;
+
+        return (decl.Identifier.GetLocation(), type.Name, isService ? "IService" : "IModel");
     }
 
     /// <summary>Binds one parameter from the assembly's Config dict; falls back to the attribute default, or throws if Required.</summary>

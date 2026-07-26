@@ -16,7 +16,7 @@ public sealed class RefGeneratorTests
             [VolatileAccess] double LiveValue { get; }   // gauge → synchronous getter
             [Triggerable] void Nudge(int by);            // notify → fire-and-forget void
         }
-        public sealed class Sensor : ModelBase, IProbe
+        public sealed partial class Sensor : ModelBase, IProbe
         {
             public Sensor(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
             public double Interrogate(int ping) => ping;
@@ -147,7 +147,7 @@ public sealed class LocalReferenceGeneratorTests
         using SimulaSharp.Kernel.Model;
         using SimulaSharp.Kernel.Services;
         namespace Demo;
-        public sealed class Tracker : ModelBase
+        public sealed partial class Tracker : ModelBase
         {
             public Tracker(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
         }

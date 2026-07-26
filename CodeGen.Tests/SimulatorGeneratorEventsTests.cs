@@ -37,7 +37,7 @@ public sealed class SimulatorGeneratorEventsTests
         }
 
         // A service that both subscribes to and produces the "Abort" event (services aren't IModel).
-        public sealed class Watcher : ServiceBase
+        public sealed partial class Watcher : ServiceBase
         {
             public Watcher(IClock c, ILogger l) : base(c, l, "Watcher") { }
             [EventHandler] public void OnAbort(AbortInfo info) { }

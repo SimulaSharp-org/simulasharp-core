@@ -79,4 +79,59 @@ public sealed class ParameterGeneratorTests
             Assert.That(r.AllSource, Does.Contain("WriteBoxed = __v => Count = (int)__v!"));
         });
     }
+
+    // A model that carries no [Parameter] members at all.
+    private const string Parameterless = """
+        using SimulaSharp.Kernel.Logging;
+        using SimulaSharp.Kernel.Model;
+        using SimulaSharp.Kernel.Services;
+        namespace Demo;
+        public partial class Bare : ModelBase
+        {
+            public Bare(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+        }
+        """;
+
+    [Test]
+    public void A_parameterless_model_still_emits_an_empty_provider()
+    {
+        // The generated simulator calls __ApplyParameters unconditionally, so even a parameterless model must
+        // expose the (empty) method and implement IParameterProvider.
+        var r = GeneratorHarness.Run(new ParameterGenerator(), Parameterless);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.AllSource, Does.Contain("__ApplyParameters"));
+            Assert.That(r.AllSource, Does.Contain("IParameterProvider"));
+            Assert.That(r.HasDiagnostic("SIM029"), Is.False, "a partial model was wrongly flagged");
+        });
+    }
+
+    [Test]
+    public void A_non_partial_model_reports_SIM029()
+    {
+        const string source = """
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public sealed class Bare : ModelBase
+            {
+                public Bare(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+            }
+            """;
+        var r = GeneratorHarness.Run(new ParameterGenerator(), source);
+        Assert.That(r.HasDiagnostic("SIM029"), Is.True);
+    }
+
+    [Test]
+    public void A_non_model_non_service_class_is_not_required_to_be_partial()
+    {
+        // SIM029 targets models/services only — a plain POCO (or an event class) needs no generation.
+        const string source = """
+            namespace Demo;
+            public sealed class PlainPoco { public int X; }
+            """;
+        var r = GeneratorHarness.Run(new ParameterGenerator(), source);
+        Assert.That(r.HasDiagnostic("SIM029"), Is.False);
+    }
 }

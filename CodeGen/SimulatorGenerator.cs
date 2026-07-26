@@ -102,7 +102,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                 ? "RegisterLooselyCoupledService" : "RegisterService";
             init.Append("        var ").Append(v).Append(" = ").Append(register).Append("(new global::").Append(svc.Type)
                 .Append("(Clock, CreateLogger(").Append(Str(name + "." + svc.Name)).AppendLine(")));");
-            EmitConfig(init, v, svc.Config);
+            EmitApplyParameters(init, v, svc.Config);
             init.Append("        CollectParametersFrom(").Append(v).Append(", ").Append(Str(name + "." + svc.Name)).AppendLine(");");
 
             // Service→service deps: each entry is { <member>: serviceName }. Bound in the later pass
@@ -241,7 +241,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             .Append("(Clock, ").Append(siteVar).Append(", CreateLogger(").Append(Str(fullPath)).Append("))");
         if (inits.Count > 0) sb.Append(" { ").Append(string.Join(", ", inits)).Append(" }");
         sb.AppendLine(");");
-        EmitConfig(sb, v, node.Config);
+        EmitApplyParameters(sb, v, node.Config);
         sb.Append("        CollectKnobsFrom(").Append(v).Append(", ").Append(Str(fullPath)).AppendLine(");");
         sb.Append("        CollectPlottablesFrom(").Append(v).Append(", ").Append(Str(fullPath)).AppendLine(");");
         sb.Append("        CollectParametersFrom(").Append(v).Append(", ").Append(Str(fullPath)).AppendLine(");");
@@ -280,13 +280,20 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
         : !string.IsNullOrWhiteSpace(evt.ArgType) ? "new global::SimulaSharp.Kernel.Events.SimEvent<global::" + evt.ArgType + ">()"
         : "new global::SimulaSharp.Kernel.Events.SimEvent()";
 
-    private static void EmitConfig(StringBuilder sb, string target, Dictionary<string, string>? config)
+    /// <summary>
+    /// Emits the <b>unconditional</b> <c>__ApplyParameters</c> call for a model/service. It is emitted even when the
+    /// instance has no <c>Config:</c> block, because the generated method also stamps each parameter's attribute
+    /// <b>default</b> for the keys that are absent — skipping the call would leave every defaulted parameter unset.
+    /// The (possibly empty) method is guaranteed to exist: every model/service must be <c>partial</c> (SIM029) and
+    /// the parameter generator emits one for each.
+    /// </summary>
+    private static void EmitApplyParameters(StringBuilder sb, string target, Dictionary<string, string>? config)
     {
-        if (config is null || config.Count == 0) return;
         sb.Append("        ").Append(target)
-            .Append(".__ApplyParameters(new global::System.Collections.Generic.Dictionary<string, string?> { ");
-        sb.Append(string.Join(", ", config.Select(kv => $"[{Str(kv.Key)}] = {Str(kv.Value)}")));
-        sb.AppendLine(" });");
+            .Append(".__ApplyParameters(new global::System.Collections.Generic.Dictionary<string, string?> {");
+        if (config is { Count: > 0 })
+            sb.Append(' ').Append(string.Join(", ", config.Select(kv => $"[{Str(kv.Key)}] = {Str(kv.Value)}"))).Append(' ');
+        sb.AppendLine("});");
     }
 
     private static string MissionStartExpr(string? missionStart)

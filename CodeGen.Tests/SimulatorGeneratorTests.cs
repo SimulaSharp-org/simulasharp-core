@@ -27,7 +27,7 @@ public sealed class SimulatorGeneratorTests
         {
             public Unit(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
         }
-        public sealed class Svc : ServiceBase
+        public sealed partial class Svc : ServiceBase
         {
             public Svc(IClock c, ILogger l) : base(c, l, "Svc") { }
         }
@@ -92,7 +92,7 @@ public sealed class SimulatorGeneratorTests
         // clock-ungated entry point, not the sim-paced RegisterService.
         const string world = World + """
 
-            public sealed class Egse : LooselyCoupledServiceBase
+            public sealed partial class Egse : LooselyCoupledServiceBase
             {
                 public Egse(IClock c, ILogger l) : base(c, l, "Egse") { }
                 protected override System.Threading.Tasks.Task _EntryPoint() => System.Threading.Tasks.Task.CompletedTask;
@@ -257,6 +257,28 @@ public sealed class SimulatorGeneratorTests
     }
 
     [Test]
+    public void Parameters_are_applied_even_without_a_config_block()
+    {
+        // Regression: a model with [Parameter] members but no Config: block must still have __ApplyParameters
+        // called (with an empty dict) so the attribute defaults are stamped. Previously the call was skipped
+        // entirely when a model had no Config block, leaving defaulted parameters unset.
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: Root
+                      Type: Demo.Plant
+            """);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Diagnostics, Is.Empty, "reported: " + string.Join(",", r.Ids));
+            Assert.That(r.AllSource, Does.Contain(".__ApplyParameters(new global::System.Collections.Generic.Dictionary<string, string?> {})"));
+        });
+    }
+
+    [Test]
     public void No_simulator_is_emitted_when_an_error_is_reported()
     {
         var r = Run("""
@@ -295,7 +317,7 @@ public sealed class SimulatorGeneratorTests
         // Gadget is a model, but not a Unit — so it cannot go into Plant's Container<Unit>.
         const string world = World + """
 
-            public sealed class Gadget : ModelBase
+            public sealed partial class Gadget : ModelBase
             {
                 public Gadget(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
             }
@@ -448,7 +470,7 @@ public sealed class SimulatorGeneratorTests
             using SimulaSharp.Kernel.Model;
             using SimulaSharp.Kernel.Services;
             namespace Demo;
-            public sealed class Cog : ModelBase
+            public sealed partial class Cog : ModelBase
             {
                 public Cog(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
             }
