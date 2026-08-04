@@ -10,15 +10,18 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace SimulaSharp.CodeGen;
 
 /// <summary>
-/// For every partial model with knob-decorated partial properties, implements them
+/// For every partial model <b>or service</b> with knob-decorated partial properties, implements them
 /// (volatile get; volatile set + change-notify) and builds a <c>Knob</c> binder
 /// per knob via an explicit <c>IKnobProvider.CollectKnobs</c> the simulator calls during
-/// discovery. v1 covers value knobs (Text/TickBox/Number&lt;T&gt;) plus trigger knobs.
+/// discovery. Covers value knobs (Text/TickBox/Number&lt;T&gt;) plus trigger knobs. The MMI-facing writes and
+/// triggers marshal onto the owner's thread through its dispatcher — a model's <c>Scheduler</c> or a service's
+/// <c>Site</c> (the surface common to both sim-paced and loosely-coupled services).
 /// </summary>
 [Generator]
 public sealed class KnobGenerator : IIncrementalGenerator
 {
     private const string IModelFullName = "SimulaSharp.Kernel.Model.IModel";
+    private const string IServiceFullName = "SimulaSharp.Kernel.Model.IService";
     private const string KnobAttrBase = "SimulaSharp.Kernel.Attributes.KnobAttribute";
     private const string TriggerAttr = "SimulaSharp.Kernel.Attributes.TriggerKnobAttribute";
     private const string K = "global::SimulaSharp.Kernel.Knobs";
@@ -43,10 +46,17 @@ public sealed class KnobGenerator : IIncrementalGenerator
     {
         if (ctx.SemanticModel.GetDeclaredSymbol((ClassDeclarationSyntax)ctx.Node) is not INamedTypeSymbol model)
             return null;
-        if (model.IsGenericType || !model.AllInterfaces.Any(static i => i.ToDisplayString() == IModelFullName))
+        bool isService = model.AllInterfaces.Any(static i => i.ToDisplayString() == IServiceFullName);
+        bool isModel = model.AllInterfaces.Any(static i => i.ToDisplayString() == IModelFullName);
+        if (model.IsGenericType || (!isModel && !isService))
             return null;
         var first = model.DeclaringSyntaxReferences.FirstOrDefault();
         if (first is null || first.GetSyntax() != ctx.Node) return null;
+
+        // A model marshals MMI-facing writes/triggers through its own IScheduler; a service through its public Site
+        // (IDispatcherSite) — the one dispatch surface common to both sim-paced and loosely-coupled services. Both
+        // are IDispatcher, so either exposes Post.
+        string dispatch = isService ? "Site" : "Scheduler";
 
         var knobs = new List<(IPropertySymbol Prop, AttributeData Attr, string Kind)>();
         var triggers = new List<(AttributeData Attr, string Name)>();
@@ -116,9 +126,9 @@ public sealed class KnobGenerator : IIncrementalGenerator
         sb.Append("    void ").Append(K).AppendLine(".IKnobProvider.CollectKnobs(string prefix, global::System.Collections.Generic.ICollection<" + K + ".Knob> into)");
         sb.AppendLine("    {");
         foreach (var (p, attr, kind) in knobs)
-            EmitKnob(sb, model.Name, p, attr, kind);
+            EmitKnob(sb, dispatch, p, attr, kind);
         foreach (var (attr, name) in triggers)
-            EmitTrigger(sb, name, attr);
+            EmitTrigger(sb, dispatch, name, attr);
         sb.AppendLine("    }");
 
         sb.AppendLine("}");
@@ -128,7 +138,7 @@ public sealed class KnobGenerator : IIncrementalGenerator
         return (hint, sb.ToString());
     }
 
-    private static void EmitKnob(StringBuilder sb, string _, IPropertySymbol p, AttributeData attr, string kind)
+    private static void EmitKnob(StringBuilder sb, string dispatch, IPropertySymbol p, AttributeData attr, string kind)
     {
         string t = p.Type.ToDisplayString(Fq);
         string f = "__" + p.Name;
@@ -151,12 +161,12 @@ public sealed class KnobGenerator : IIncrementalGenerator
         sb.Append("            ReadBoxed = () => ").Append(Vol).Append(".Read(ref ").Append(f).AppendLine("),");
         if (writable)
             sb.Append("            WriteBoxed = v => { ").Append(Vol).Append(".Write(ref ").Append(f).Append(", (").Append(t)
-              .Append(")v!); Scheduler.Post(() => ").Append(f).AppendLine("Knob!.RaiseChanged()); },");
+              .Append(")v!); ").Append(dispatch).Append(".Post(() => ").Append(f).AppendLine("Knob!.RaiseChanged()); },");
         sb.AppendLine("        };");
         sb.Append("        into.Add(").Append(f).AppendLine("Knob);");
     }
 
-    private static void EmitTrigger(StringBuilder sb, string name, AttributeData attr)
+    private static void EmitTrigger(StringBuilder sb, string dispatch, string name, AttributeData attr)
     {
         bool ro = Named(attr, "IsReadOnly") is bool b && b;
         sb.Append("        __").Append(name).Append("Knob = new ").Append(K).AppendLine(".Knob");
@@ -165,7 +175,7 @@ public sealed class KnobGenerator : IIncrementalGenerator
         sb.Append("            Label = ").Append(Str(attr.ConstructorArguments.FirstOrDefault().Value as string ?? name)).AppendLine(",");
         sb.Append("            Kind = ").Append(K).AppendLine(".KnobKind.Trigger,");
         sb.Append("            IsReadOnly = ").Append(ro ? "true" : "false").AppendLine(",");
-        sb.Append("            Invoke = () => Scheduler.Post(() => ").Append(name).AppendLine("()),");
+        sb.Append("            Invoke = () => ").Append(dispatch).Append(".Post(() => ").Append(name).AppendLine("()),");
         sb.AppendLine("        };");
         sb.Append("        into.Add(__").Append(name).AppendLine("Knob);");
     }

@@ -107,9 +107,10 @@ public abstract class SimulatorBase : ISimulator
     /// <summary>Creates a component-scoped logger over this simulation's clock and sink fan-out.</summary>
     protected ILogger CreateLogger(string issuer) => new ComponentLogger(issuer, _clock, _router);
 
-    /// <summary>Collects a model's knobs (if any) into the simulation's cached list, stamped with its full path.</summary>
-    protected void CollectKnobsFrom(IModel model, string fullPath) =>
-        (model as IKnobProvider)?.CollectKnobs(fullPath, _knobs);
+    /// <summary>Collects an instance's knobs (if any) into the simulation's cached list, stamped with its full path.
+    /// Works for both models and services (either may declare <c>[Knob]</c> members).</summary>
+    protected void CollectKnobsFrom(object instance, string fullPath) =>
+        (instance as IKnobProvider)?.CollectKnobs(fullPath, _knobs);
 
     /// <summary>Collects a model's plottables (if any) into the simulation's map, keyed by full path.</summary>
     protected void CollectPlottablesFrom(IModel model, string fullPath) =>

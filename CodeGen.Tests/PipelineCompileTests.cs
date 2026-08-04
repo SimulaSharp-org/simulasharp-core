@@ -123,6 +123,38 @@ public sealed class PipelineCompileTests
     }
 
     [Test]
+    public void A_service_carrying_a_knob_compiles_end_to_end()
+    {
+        // A service with a value knob and a trigger knob: the knob generator emits Site.Post dispatch (which must
+        // resolve against ServiceBase.Site), and the simulator runs CollectKnobsFrom on the service.
+        const string source = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+
+            public partial class Link : ServiceBase
+            {
+                public Link(IClock c, ILogger l) : base(c, l, "Link") { }
+                [NumberKnob<int>("Rate", Min = 0, Max = 100)] public partial int Rate { get; set; }
+                [TriggerKnob("Ping")] protected void Handle_Ping() { }
+            }
+            """;
+        const string yaml = """
+            Simulator:
+              Name: Net
+              Services:
+                - Name: Link
+                  Type: Demo.Link
+              Sites: []
+            """;
+
+        var errors = GeneratorHarness.CompileWithAllGenerators(source, yaml);
+        Assert.That(errors, Is.Empty, "generated code did not compile:\n" + string.Join("\n", errors));
+    }
+
+    [Test]
     public void A_defaulted_parameter_model_compiles_without_a_config_block()
     {
         // A model with a [Parameter] default and NO Config: block must compile end to end: the parameter

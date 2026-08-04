@@ -86,6 +86,15 @@ public sealed class SimulatorGeneratorTests
     }
 
     [Test]
+    public void A_service_gets_knob_discovery()
+    {
+        // Services can carry knobs now, so the simulator must run knob discovery on them too. The service Dep is
+        // minted first, so it is __c0 (as the cyclic-deps test relies on).
+        var r = Run(ValidYaml);
+        Assert.That(r.AllSource, Does.Contain("CollectKnobsFrom(__c0"), "the service did not get knob discovery");
+    }
+
+    [Test]
     public void A_loosely_coupled_service_routes_to_RegisterLooselyCoupledService()
     {
         // A service whose type derives LooselyCoupledServiceBase must register through the

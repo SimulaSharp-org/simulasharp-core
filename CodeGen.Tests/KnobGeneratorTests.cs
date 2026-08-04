@@ -101,6 +101,47 @@ public sealed class KnobGeneratorTests
     }
 
     [Test]
+    public void A_model_knob_dispatches_through_its_Scheduler()
+    {
+        var r = GeneratorHarness.Run(new KnobGenerator(), ModelWithKnobs);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.AllSource, Does.Contain("Scheduler.Post(() => __SpeedKnob!.RaiseChanged())"),
+                "a model knob write did not marshal through Scheduler");
+            Assert.That(r.AllSource, Does.Contain("Scheduler.Post(() => Reset())"), "a model trigger did not marshal through Scheduler");
+            Assert.That(r.AllSource, Does.Not.Contain("Site.Post"), "a model must not dispatch through Site");
+        });
+    }
+
+    [Test]
+    public void A_service_with_knobs_dispatches_through_its_Site()
+    {
+        // Services can carry knobs too; their MMI-facing writes/triggers marshal through the public Site
+        // (IDispatcherSite), the surface common to both sim-paced and loosely-coupled services.
+        const string src = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public partial class Link : ServiceBase
+            {
+                public Link(IClock c, ILogger l) : base(c, l, "Link") { }
+                [NumberKnob<int>("Rate", Min = 0, Max = 100)] public partial int Rate { get; set; }
+                [TriggerKnob("Ping")] protected void Handle_Ping() { }
+            }
+            """;
+        var r = GeneratorHarness.Run(new KnobGenerator(), src);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.AllSource, Does.Contain("IKnobProvider"), "the service did not implement IKnobProvider");
+            Assert.That(r.AllSource, Does.Contain("Site.Post(() => __RateKnob!.RaiseChanged())"), "service knob write did not marshal through Site");
+            Assert.That(r.AllSource, Does.Contain("Site.Post(() => Ping())"), "service trigger did not marshal through Site");
+            Assert.That(r.AllSource, Does.Not.Contain("Scheduler.Post"), "a service must not dispatch through Scheduler");
+        });
+    }
+
+    [Test]
     public void A_model_with_no_knobs_generates_nothing()
     {
         const string bare = """
