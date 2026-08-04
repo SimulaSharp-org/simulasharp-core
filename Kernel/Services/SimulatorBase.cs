@@ -112,9 +112,10 @@ public abstract class SimulatorBase : ISimulator
     protected void CollectKnobsFrom(object instance, string fullPath) =>
         (instance as IKnobProvider)?.CollectKnobs(fullPath, _knobs);
 
-    /// <summary>Collects a model's plottables (if any) into the simulation's map, keyed by full path.</summary>
-    protected void CollectPlottablesFrom(IModel model, string fullPath) =>
-        (model as IPlottableProvider)?.CollectPlottables(fullPath, _plottables);
+    /// <summary>Collects an instance's plottables (if any) into the simulation's map, keyed by full path.
+    /// Works for both models and services (either may declare <c>[Plottable]</c> members).</summary>
+    protected void CollectPlottablesFrom(object instance, string fullPath) =>
+        (instance as IPlottableProvider)?.CollectPlottables(fullPath, _plottables);
 
     /// <summary>Collects an instance's parameters (if any) into the simulation's list, stamped with its full path.
     /// Works for both models and services (either may declare <c>[Parameter]</c> members).</summary>

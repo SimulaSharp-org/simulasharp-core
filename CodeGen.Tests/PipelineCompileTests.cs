@@ -123,10 +123,11 @@ public sealed class PipelineCompileTests
     }
 
     [Test]
-    public void A_service_carrying_a_knob_compiles_end_to_end()
+    public void A_service_carrying_knobs_and_a_plottable_compiles_end_to_end()
     {
-        // A service with a value knob and a trigger knob: the knob generator emits Site.Post dispatch (which must
-        // resolve against ServiceBase.Site), and the simulator runs CollectKnobsFrom on the service.
+        // A service with a value knob, a trigger knob, and a plottable: the knob generator emits Site.Post dispatch
+        // (which must resolve against ServiceBase.Site), the plottable generator emits a volatile sampler, and the
+        // simulator runs CollectKnobsFrom + CollectPlottablesFrom on the service.
         const string source = """
             using SimulaSharp.Kernel.Attributes;
             using SimulaSharp.Kernel.Logging;
@@ -139,6 +140,7 @@ public sealed class PipelineCompileTests
                 public Link(IClock c, ILogger l) : base(c, l, "Link") { }
                 [NumberKnob<int>("Rate", Min = 0, Max = 100)] public partial int Rate { get; set; }
                 [TriggerKnob("Ping")] protected void Handle_Ping() { }
+                [Plottable("Latency", Unit = "us")] public partial double Latency { get; set; }
             }
             """;
         const string yaml = """

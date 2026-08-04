@@ -95,6 +95,14 @@ public sealed class SimulatorGeneratorTests
     }
 
     [Test]
+    public void A_service_gets_plottable_discovery()
+    {
+        // Services can carry plottables now, so the simulator must run plottable discovery on them too.
+        var r = Run(ValidYaml);
+        Assert.That(r.AllSource, Does.Contain("CollectPlottablesFrom(__c0"), "the service did not get plottable discovery");
+    }
+
+    [Test]
     public void A_loosely_coupled_service_routes_to_RegisterLooselyCoupledService()
     {
         // A service whose type derives LooselyCoupledServiceBase must register through the

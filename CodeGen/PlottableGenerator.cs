@@ -9,10 +9,11 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace SimulaSharp.CodeGen;
 
 /// <summary>
-/// For every partial model with <c>[Plottable]</c> properties, implements
+/// For every partial model <b>or service</b> with <c>[Plottable]</c> properties, implements
 /// <c>IPlottableProvider.CollectPlottables</c> — building a <c>Plottable</c>
 /// binder per member whose <c>Sample</c> delegate does a volatile read (through the
-/// member's volatile getter) projected to <c>double</c>.
+/// member's volatile getter) projected to <c>double</c>. Sampling is lock-free (the MMI reads on its own
+/// thread), so — unlike knobs — nothing here dispatches onto the owner's thread.
 /// <para>
 /// Materialization is coordinated with <see cref="KnobGenerator"/>: a plottable property
 /// that is <em>also</em> a knob is already materialized (volatile backing field + partial
@@ -25,6 +26,7 @@ namespace SimulaSharp.CodeGen;
 public sealed class PlottableGenerator : IIncrementalGenerator
 {
     private const string IModelFullName = "SimulaSharp.Kernel.Model.IModel";
+    private const string IServiceFullName = "SimulaSharp.Kernel.Model.IService";
     private const string PlottableAttr = "SimulaSharp.Kernel.Attributes.PlottableAttribute";
     private const string KnobAttrBase = "SimulaSharp.Kernel.Attributes.KnobAttribute";
     private const string P = "global::SimulaSharp.Kernel.Plotting";
@@ -66,7 +68,8 @@ public sealed class PlottableGenerator : IIncrementalGenerator
     {
         if (ctx.SemanticModel.GetDeclaredSymbol((ClassDeclarationSyntax)ctx.Node) is not INamedTypeSymbol model)
             return null;
-        if (model.IsGenericType || !model.AllInterfaces.Any(static i => i.ToDisplayString() == IModelFullName))
+        bool isComponent = model.AllInterfaces.Any(static i => i.ToDisplayString() is IModelFullName or IServiceFullName);
+        if (model.IsGenericType || !isComponent)
             return null;
         // Emit once per type even if it is declared across multiple partial files.
         var first = model.DeclaringSyntaxReferences.FirstOrDefault();

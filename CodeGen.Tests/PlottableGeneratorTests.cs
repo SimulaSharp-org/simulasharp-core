@@ -81,4 +81,29 @@ public sealed class PlottableGeneratorTests
             Model("""[Plottable("Load")] public partial double Load { get; set; }"""));
         Assert.That(r.AllSource, Does.Contain("into[prefix + \".Load\"]"));
     }
+
+    [Test]
+    public void A_service_with_a_plottable_implements_IPlottableProvider()
+    {
+        // Plottables are pure volatile sampling — no dispatch — so a service supports them the same as a model.
+        const string src = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public partial class Link : ServiceBase
+            {
+                public Link(IClock c, ILogger l) : base(c, l, "Link") { }
+                [Plottable("Latency", Unit = "us")] public partial double Latency { get; set; }
+            }
+            """;
+        var r = GeneratorHarness.Run(new PlottableGenerator(), src);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.AllSource, Does.Contain("IPlottableProvider"));
+            Assert.That(r.AllSource, Does.Contain("Sample = () => (double)this.Latency"));
+            Assert.That(r.AllSource, Does.Contain("Unit = \"us\""));
+        });
+    }
 }

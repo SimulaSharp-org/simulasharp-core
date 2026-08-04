@@ -105,6 +105,7 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
             EmitApplyParameters(init, v, svc.Config);
             init.Append("        CollectParametersFrom(").Append(v).Append(", ").Append(Str(name + "." + svc.Name)).AppendLine(");");
             init.Append("        CollectKnobsFrom(").Append(v).Append(", ").Append(Str(name + "." + svc.Name)).AppendLine(");");
+            init.Append("        CollectPlottablesFrom(").Append(v).Append(", ").Append(Str(name + "." + svc.Name)).AppendLine(");");
 
             // Service→service deps: each entry is { <member>: serviceName }. Bound in the later pass
             // (loop 3) once every service var exists, so a service may reference one declared after it —
