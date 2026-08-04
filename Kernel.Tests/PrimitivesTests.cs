@@ -38,6 +38,62 @@ public sealed class SimYieldTests
         {
             Assert.That(y.Awaited, Is.SameAs(task));
             Assert.That(y.DelayUs, Is.EqualTo(0));
+            Assert.That(y.Token, Is.Null, "an unbounded await has no token");
+        });
+    }
+
+    [Test]
+    public void Bounded_Await_carries_the_task_timeout_and_token()
+    {
+        var task = Task.CompletedTask;
+        var tok = new SimAwaitToken();
+        var y = SimYield.Await(task, timeoutUs: 5_000, tok);
+        Assert.Multiple(() =>
+        {
+            Assert.That(y.Awaited, Is.SameAs(task));
+            Assert.That(y.DelayUs, Is.EqualTo(0));
+            Assert.That(y.TimeoutUs, Is.EqualTo(5_000));
+            Assert.That(y.Token, Is.SameAs(tok));
+        });
+    }
+}
+
+[TestFixture]
+public sealed class SimAwaitTokenTests
+{
+    [Test]
+    public void A_fresh_token_is_unresolved()
+    {
+        var t = new SimAwaitToken();
+        Assert.Multiple(() =>
+        {
+            Assert.That(t.TimedOut, Is.False);
+            Assert.That(t.Completed, Is.False);
+        });
+    }
+
+    [Test]
+    public void TryResolve_is_single_shot_first_writer_wins()
+    {
+        var t = new SimAwaitToken();
+        Assert.That(t.TryResolve(timedOut: true), Is.True, "the first resolve should win");
+        Assert.That(t.TryResolve(timedOut: false), Is.False, "a second resolve must be ignored");
+        Assert.Multiple(() =>
+        {
+            Assert.That(t.TimedOut, Is.True);
+            Assert.That(t.Completed, Is.False, "the losing outcome must not stick");
+        });
+    }
+
+    [Test]
+    public void Resolving_completed_sets_Completed_not_TimedOut()
+    {
+        var t = new SimAwaitToken();
+        Assert.That(t.TryResolve(timedOut: false), Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(t.Completed, Is.True);
+            Assert.That(t.TimedOut, Is.False);
         });
     }
 }

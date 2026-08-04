@@ -67,11 +67,19 @@ public sealed class EventQueue
     private readonly List<int> _dueBatch;
 
     /// <summary>
-    /// Invoked when a coroutine yields <see cref="SimYield.Await"/>, with (slot, version, task).
+    /// Invoked when a coroutine yields an unbounded <see cref="SimYield.Await(Task)"/>, with (slot, version, task).
     /// The owner (SimSite) must arrange to call <see cref="ReArm"/> on its own thread once the
     /// task completes; set it before running awaiting coroutines.
     /// </summary>
     public Action<int, int, Task>? OnAwait;
+
+    /// <summary>
+    /// Invoked when a coroutine yields a <b>bounded</b> <see cref="SimYield.Await(Task, long, SimAwaitToken)"/>, with
+    /// (slot, version, task, timeoutUs, token). The owner (SimSite) resumes the coroutine via <see cref="ReArm"/> on
+    /// its own thread when the task completes <em>or</em> the timeout elapses — whichever comes first — resolving the
+    /// token to the matching outcome. Set it before running awaiting coroutines.
+    /// </summary>
+    public Action<int, int, Task, long, SimAwaitToken>? OnAwaitTimed;
 
     /// <summary>Creates a queue that can hold at most <paramref name="maxCapacity"/> pending entries.</summary>
     /// <param name="maxCapacity">Maximum pending entries.</param>
@@ -202,8 +210,13 @@ public sealed class EventQueue
                     var y = s.Coroutine.Current;
                     if (y.Awaited is { } awaited)
                     {
-                        // Park: keep the slot, don't time-schedule; resume via ReArm when the task completes.
-                        OnAwait?.Invoke(slot, s.Version, awaited);
+                        // Park: keep the slot, don't time-schedule; resume via ReArm when the task completes — or,
+                        // for a bounded await (a token is present), when the timeout elapses first. The owner arms
+                        // both triggers and the token's single-shot resolve picks the winner.
+                        if (y.Token is { } token)
+                            OnAwaitTimed?.Invoke(slot, s.Version, awaited, y.TimeoutUs, token);
+                        else
+                            OnAwait?.Invoke(slot, s.Version, awaited);
                     }
                     else
                     {
@@ -249,7 +262,7 @@ public sealed class EventQueue
     }
 
     /// <summary>
-    /// Re-arms a coroutine parked by <see cref="SimYield.Await"/> so it resumes at
+    /// Re-arms a coroutine parked by <see cref="SimYield.Await(Task)"/> so it resumes at
     /// <paramref name="nowUs"/>. Must be called on the owning site's thread (via its inbox).
     /// No-ops if the slot was freed/reused since parking (guarded by <paramref name="version"/>).
     /// </summary>

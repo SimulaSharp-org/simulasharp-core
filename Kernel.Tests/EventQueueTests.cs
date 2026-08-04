@@ -175,6 +175,43 @@ public sealed class EventQueueTests
     }
 
     [Test]
+    public void Bounded_await_routes_to_OnAwaitTimed_and_resumes_on_ReArm()
+    {
+        var q = new EventQueue(8);
+        bool plainCalled = false;
+        int slot = -1, version = -1;
+        long timeout = -1;
+        SimAwaitToken? captured = null;
+        q.OnAwait = (_, _, _) => plainCalled = true;
+        q.OnAwaitTimed = (s, v, _, t, tok) => { slot = s; version = v; timeout = t; captured = tok; };
+
+        var tcs = new TaskCompletionSource();
+        var token = new SimAwaitToken();
+        int step = 0;
+        IEnumerator<SimYield> Body()
+        {
+            step = 1; yield return SimYield.Await(tcs.Task, timeoutUs: 500, token);
+            step = 2;
+        }
+        q.AddCoroutine(Body, 0);
+
+        q.ProcessDue(0);
+        Assert.Multiple(() =>
+        {
+            Assert.That(step, Is.EqualTo(1));
+            Assert.That(plainCalled, Is.False, "a bounded await must not route to the unbounded OnAwait");
+            Assert.That(slot, Is.GreaterThanOrEqualTo(0), "OnAwaitTimed was not invoked");
+            Assert.That(timeout, Is.EqualTo(500), "the timeout was not forwarded");
+            Assert.That(captured, Is.SameAs(token), "the coroutine's own token was not forwarded");
+            Assert.That(q.PeekNextDueTime(), Is.EqualTo(-1), "parked coroutine was still time-scheduled");
+        });
+
+        q.ReArm(slot, version, nowUs: 10);
+        q.ProcessDue(10);
+        Assert.That(step, Is.EqualTo(2), "coroutine did not resume after ReArm");
+    }
+
+    [Test]
     public void A_throwing_entry_is_dropped_and_its_slot_reclaimed()
     {
         var q = new EventQueue(2);

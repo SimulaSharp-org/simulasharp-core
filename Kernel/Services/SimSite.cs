@@ -93,6 +93,33 @@ public sealed class SimSite : IScheduler, IDispatcherSite, IHorizonWaiter
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
+
+        // A bounded await: resume when the task completes OR when the sim-time timeout elapses, whichever first.
+        // Two triggers are armed — a sim-time deadline entry and the task's completion continuation — and the token's
+        // single-shot resolve decides the winner. Both resolutions run on this site thread (the deadline in
+        // ProcessDue, the completion via the inbox), so the race is settled without locking.
+        _events.OnAwaitTimed = (slot, version, task, timeoutUs, token) =>
+        {
+            int deadline = _events.AddEvent(
+                () => { if (token.TryResolve(timedOut: true)) _events.ReArm(slot, version, _clock.SimNowUs); },
+                _clock.SimNowUs + timeoutUs);
+
+            if (deadline < 0)
+                _logger?.LogError($"await timeout could not be armed on site '{_name}' (event queue full); the await is unbounded");
+
+            task.ContinueWith(
+                _ => Post(() =>
+                {
+                    if (token.TryResolve(timedOut: false))
+                    {
+                        _events.RemoveEvent(deadline);   // the deadline is moot now — reclaim its slot
+                        _events.ReArm(slot, version, _clock.SimNowUs);
+                    }
+                }),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        };
     }
 
     /// <summary>

@@ -178,6 +178,65 @@ public sealed class SimSiteTests
     }
 
     [Test]
+    public void A_bounded_await_resumes_as_completed_when_its_task_finishes_before_the_timeout()
+    {
+        var (clock, site) = NewRunning();
+        using var _ = clock; using var __ = site;
+        var gate = new TaskCompletionSource();
+        var tok = new SimAwaitToken();
+        int step = 0;
+        IEnumerator<SimYield> Body()
+        {
+            Interlocked.Exchange(ref step, 1);
+            yield return SimYield.Await(gate.Task, timeoutUs: 1_000_000, tok);   // generous 1 s deadline
+            Interlocked.Exchange(ref step, tok.TimedOut ? 3 : 2);
+        }
+
+        site.InjectVoidAsync(() => site.AddCoroutine(Body, 0)).Wait();
+        clock.RunFor(20_000);
+        Assert.That(WaitUntil(() => Volatile.Read(ref step) == 1), Is.True, "coroutine did not reach the await");
+
+        gate.SetResult();                  // the task wins the race well before the deadline
+        clock.RunFor(20_000);
+        Assert.Multiple(() =>
+        {
+            Assert.That(WaitUntil(() => Volatile.Read(ref step) == 2), Is.True, "did not resume as completed");
+            Assert.That(tok.Completed, Is.True);
+            Assert.That(tok.TimedOut, Is.False);
+        });
+    }
+
+    [Test]
+    public void A_bounded_await_times_out_when_its_task_never_completes()
+    {
+        var (clock, site) = NewRunning();
+        using var _ = clock; using var __ = site;
+        var never = new TaskCompletionSource();    // deliberately never completed within the deadline
+        var tok = new SimAwaitToken();
+        int step = 0;
+        IEnumerator<SimYield> Body()
+        {
+            Interlocked.Exchange(ref step, 1);
+            yield return SimYield.Await(never.Task, timeoutUs: 15_000, tok);
+            Interlocked.Exchange(ref step, tok.TimedOut ? 3 : 2);
+        }
+
+        site.InjectVoidAsync(() => site.AddCoroutine(Body, 0)).Wait();
+        clock.RunFor(40_000);              // advance well past the 15 ms sim-time deadline
+        Assert.Multiple(() =>
+        {
+            Assert.That(WaitUntil(() => Volatile.Read(ref step) == 3), Is.True, "coroutine did not resume as timed-out");
+            Assert.That(tok.TimedOut, Is.True);
+            Assert.That(tok.Completed, Is.False);
+        });
+
+        // The task completing *after* the timeout must not resume the coroutine a second time.
+        never.SetResult();
+        clock.RunFor(20_000);
+        Assert.That(Volatile.Read(ref step), Is.EqualTo(3), "a late task completion wrongly re-resumed a timed-out await");
+    }
+
+    [Test]
     public void A_paused_clock_parks_the_site_so_no_work_runs()
     {
         var (clock, site) = NewRunning();
