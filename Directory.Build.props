@@ -4,6 +4,10 @@
        (the libraries + the meta-package) actually produce a .nupkg; tests set IsPackable=false. -->
   <PropertyGroup>
     <Version>0.5.2</Version>
+    <!-- Pinned so the ALC binding identity stays stable across patch releases: the MMI host and a packed sim
+         plugin must load the SAME SimulaSharp identity across the collectible load context. Bump this ONLY on a
+         binary-breaking change; <Version>/<FileVersion> keep moving per release. (FileVersion tracks <Version>.) -->
+    <AssemblyVersion>0.5.0.0</AssemblyVersion>
     <Authors>Andreas Michelis</Authors>
     <Company>Andreas Michelis</Company>
     <Copyright>Copyright (c) 2026 Andreas Michelis</Copyright>
