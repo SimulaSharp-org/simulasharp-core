@@ -296,6 +296,38 @@ public sealed class SimulatorGeneratorTests
     }
 
     [Test]
+    public void A_string_parameter_default_is_not_mistaken_for_the_config_key()
+    {
+        // [Parameter("RHCP")] — "RHCP" is the DEFAULT value; the config key is the member name (Polarisation),
+        // exactly as the runtime binder resolves it. The analyzer must not treat the string default as the key.
+        const string world = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public partial class Radio : ModelBase
+            {
+                public Radio(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+                [Parameter("RHCP")] public string Polarisation { get; set; }
+            }
+            """;
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: Root
+                      Type: Demo.Radio
+                      Config:
+                        Polarisation: "LHCP"
+            """, world);
+        Assert.That(r.HasDiagnostic("SIM016"), Is.False,
+            "a string [Parameter(default)] was false-flagged SIM016 — the default was mistaken for the config key");
+    }
+
+    [Test]
     public void An_empty_string_config_value_roundtrips()
     {
         const string world = """

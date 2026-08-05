@@ -727,7 +727,10 @@ public sealed class SimulatorGenerator : IIncrementalGenerator
                     {
                         var a = m.GetAttributes().FirstOrDefault(x => SymbolEqualityComparer.Default.Equals(x.AttributeClass, _configAttr));
                         if (a is null) continue;
-                        string ck = a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is string k ? k : m.Name;
+                        // The config key is the [Parameter] Key named-arg, else the member name — matching the runtime
+                        // binder (ParameterGenerator). The ctor arg is the DEFAULT value, not the key: reading it here
+                        // false-flagged any string [Parameter("…")] whose key equals its member name (SIM016).
+                        string ck = a.NamedArguments.FirstOrDefault(n => n.Key == "Key").Value.Value as string ?? m.Name;
                         if (ck == key) { found = true; break; }
                     }
                 if (!found) Report(UnknownConfigKey, key, type.Name);
