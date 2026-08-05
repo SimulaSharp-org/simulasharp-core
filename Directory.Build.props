@@ -3,7 +3,7 @@
   <!-- Shared package metadata + versioning for every project in the repo. Only packable projects
        (the libraries + the meta-package) actually produce a .nupkg; tests set IsPackable=false. -->
   <PropertyGroup>
-    <Version>0.5.2</Version>
+    <Version>0.5.3</Version>
     <!-- Pinned so the ALC binding identity stays stable across patch releases: the MMI host and a packed sim
          plugin must load the SAME SimulaSharp identity across the collectible load context. Bump this ONLY on a
          binary-breaking change; <Version>/<FileVersion> keep moving per release. (FileVersion tracks <Version>.) -->
