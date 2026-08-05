@@ -142,6 +142,57 @@ public sealed class KnobGeneratorTests
     }
 
     [Test]
+    public void An_enum_knob_emits_a_dropdown_with_value_label_options()
+    {
+        const string src = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public enum Polarisation { RHCP, LHCP = 5 }
+            public partial class Antenna : ModelBase
+            {
+                public Antenna(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+                [EnumKnob("Polarisation")] public partial Polarisation Pol { get; set; }
+            }
+            """;
+        var r = GeneratorHarness.Run(new KnobGenerator(), src);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.AllSource, Does.Contain("KnobKind.Enum"));
+            // Backing field is the enum's underlying integer; the typed property casts through it.
+            Assert.That(r.AllSource, Does.Contain("private int __Pol"));
+            Assert.That(r.AllSource, Does.Contain("get => (global::Demo.Polarisation)"));
+            // Options are (underlying value, member name) pairs — including explicit values.
+            Assert.That(r.AllSource, Does.Contain("KnobOption(0L, \"RHCP\")"));
+            Assert.That(r.AllSource, Does.Contain("KnobOption(5L, \"LHCP\")"));
+            // The value is exchanged as long over the underlying-int field.
+            Assert.That(r.AllSource, Does.Contain("ReadBoxed = () => (long)"));
+            Assert.That(r.AllSource, Does.Contain("(int)(long)v!"));
+        });
+    }
+
+    [Test]
+    public void An_EnumKnob_on_a_non_enum_property_reports_SIM030()
+    {
+        const string src = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public partial class Bad : ModelBase
+            {
+                public Bad(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+                [EnumKnob("Nope")] public partial int Nope { get; set; }
+            }
+            """;
+        var r = GeneratorHarness.Run(new KnobGenerator(), src);
+        Assert.That(r.HasDiagnostic("SIM030"), Is.True);
+    }
+
+    [Test]
     public void A_model_with_no_knobs_generates_nothing()
     {
         const string bare = """

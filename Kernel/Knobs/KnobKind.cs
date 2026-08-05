@@ -13,5 +13,8 @@ public enum KnobKind
     Text,
 
     /// <summary>A method trigger (no value).</summary>
-    Trigger
+    Trigger,
+
+    /// <summary>An enumerated value chosen from a fixed set (dropdown); see the knob's <c>Options</c>.</summary>
+    Enum
 }

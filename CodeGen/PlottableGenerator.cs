@@ -117,12 +117,20 @@ public sealed class PlottableGenerator : IIncrementalGenerator
             if (!materialize) continue;
             string t = p.Type.ToDisplayString(Fq);
             string f = "__" + p.Name;
-            sb.Append("    private ").Append(t).Append(' ').Append(f).AppendLine(" = default!;");
+            // Volatile needs a primitive, so an enum property backs its value with the enum's underlying integer and
+            // casts through it on the typed (enum) property — otherwise Volatile.Read/Write(ref enumField) is a CS0452.
+            bool isEnum = p.Type.TypeKind == TypeKind.Enum;
+            string ft = isEnum ? ((INamedTypeSymbol)p.Type).EnumUnderlyingType!.ToDisplayString(Fq) : t;
+            sb.Append("    private ").Append(ft).Append(' ').Append(f).AppendLine(" = default!;");
             sb.Append("    public partial ").Append(t).Append(' ').Append(p.Name).AppendLine();
             sb.AppendLine("    {");
-            sb.Append("        get => ").Append(Vol).Append(".Read(ref ").Append(f).AppendLine(");");
+            if (isEnum)
+                sb.Append("        get => (").Append(t).Append(')').Append(Vol).Append(".Read(ref ").Append(f).AppendLine(");");
+            else
+                sb.Append("        get => ").Append(Vol).Append(".Read(ref ").Append(f).AppendLine(");");
             if (p.SetMethod is not null)
-                sb.Append("        set => ").Append(Vol).Append(".Write(ref ").Append(f).AppendLine(", value);");
+                sb.Append("        set => ").Append(Vol).Append(".Write(ref ").Append(f).Append(", ")
+                  .Append(isEnum ? "(" + ft + ")value" : "value").AppendLine(");");
             sb.AppendLine("    }");
         }
 

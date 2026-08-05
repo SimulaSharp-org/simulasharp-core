@@ -50,6 +50,9 @@ public sealed class Knob
     /// <summary>Whether a text knob permits newlines.</summary>
     public bool? AllowNewLine { get; init; }
 
+    /// <summary>For an <see cref="KnobKind.Enum"/> knob: the selectable options (underlying value + label). Null otherwise.</summary>
+    public IReadOnlyList<KnobOption>? Options { get; init; }
+
     /// <summary>Typed volatile read of the value, boxed. Null for triggers.</summary>
     public Func<object?>? ReadBoxed { get; init; }
 

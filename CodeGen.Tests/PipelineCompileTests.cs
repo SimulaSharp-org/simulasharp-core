@@ -157,6 +157,40 @@ public sealed class PipelineCompileTests
     }
 
     [Test]
+    public void An_enum_knob_and_an_enum_plottable_compile_end_to_end()
+    {
+        // The enum knob backs its value with the underlying int and casts (Volatile can't take an enum field);
+        // the enum plottable-only property must materialize the same way (previously a CS0452). Both together here.
+        const string source = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+
+            public enum Mode { Idle, Active }
+
+            public partial class Radio : ModelBase
+            {
+                public Radio(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+                [EnumKnob("Mode")] public partial Mode Mode { get; set; }
+                [Plottable("State")] public partial Mode State { get; set; }
+            }
+            """;
+        const string yaml = """
+            Simulator:
+              Name: Rig
+              Sites:
+                - Name: Main
+                  Models:
+                    - { Name: Root, Type: Demo.Radio }
+            """;
+
+        var errors = GeneratorHarness.CompileWithAllGenerators(source, yaml);
+        Assert.That(errors, Is.Empty, "generated code did not compile:\n" + string.Join("\n", errors));
+    }
+
+    [Test]
     public void A_defaulted_parameter_model_compiles_without_a_config_block()
     {
         // A model with a [Parameter] default and NO Config: block must compile end to end: the parameter

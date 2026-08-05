@@ -66,6 +66,16 @@ public class TickBoxKnobAttribute(string label) : KnobAttribute(label);
 [AttributeUsage(AttributeTargets.Method)]
 public class TriggerKnobAttribute(string label) : KnobAttribute(label);
 
+/// <summary>
+/// Decorates a model or service member of an <b>enum</b> type to be exposed as a <b>dropdown</b> knob. The generator
+/// discovers the enum's members and offers them as the selectable options — each an underlying integer value plus its
+/// name — and the knob's value is the selected underlying value. In ReadOnly mode it is an indicator of the current
+/// member; in Read/Write mode a dropdown the operator (and the model) can change.
+/// </summary>
+/// <param name="label">The knob label.</param>
+[AttributeUsage(AttributeTargets.Property)]
+public class EnumKnobAttribute(string label) : KnobAttribute(label);
+
 /// <summary>How a numeric knob is presented in the UI.</summary>
 public enum NumberKnobType
 {

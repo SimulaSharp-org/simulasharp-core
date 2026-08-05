@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -29,6 +30,12 @@ public sealed class KnobGenerator : IIncrementalGenerator
 
     private static readonly SymbolDisplayFormat Fq = SymbolDisplayFormat.FullyQualifiedFormat;
 
+    // SIM030: [EnumKnob] on a member whose type is not an enum.
+    private static readonly DiagnosticDescriptor EnumKnobNotEnum = new(
+        "SIM030", "[EnumKnob] must be an enum property",
+        "[EnumKnob] member '{0}' must be a property of an enum type",
+        "SimulaSharp.Observability", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
     /// <inheritdoc/>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -39,10 +46,21 @@ public sealed class KnobGenerator : IIncrementalGenerator
             .Where(static g => g is not null)
             .Select(static (g, _) => g!.Value);
 
-        context.RegisterSourceOutput(models, static (spc, g) => spc.AddSource(g.HintName, g.Source));
+        context.RegisterSourceOutput(models, static (spc, g) =>
+        {
+            foreach (var d in g.Diagnostics) spc.ReportDiagnostic(d);
+            if (g.Source is not null) spc.AddSource(g.HintName!, g.Source);
+        });
     }
 
-    private static (string HintName, string Source)? Build(GeneratorSyntaxContext ctx)
+    private readonly struct Result(string? hintName, string? source, ImmutableArray<Diagnostic> diagnostics)
+    {
+        public readonly string? HintName = hintName;
+        public readonly string? Source = source;
+        public readonly ImmutableArray<Diagnostic> Diagnostics = diagnostics;
+    }
+
+    private static Result? Build(GeneratorSyntaxContext ctx)
     {
         if (ctx.SemanticModel.GetDeclaredSymbol((ClassDeclarationSyntax)ctx.Node) is not INamedTypeSymbol model)
             return null;
@@ -58,6 +76,7 @@ public sealed class KnobGenerator : IIncrementalGenerator
         // are IDispatcher, so either exposes Post.
         string dispatch = isService ? "Site" : "Scheduler";
 
+        var diags = ImmutableArray.CreateBuilder<Diagnostic>();
         var knobs = new List<(IPropertySymbol Prop, AttributeData Attr, string Kind)>();
         var triggers = new List<(AttributeData Attr, string Name)>();
         foreach (var member in model.GetMembers())
@@ -68,7 +87,15 @@ public sealed class KnobGenerator : IIncrementalGenerator
                 {
                     var attr = p.GetAttributes().FirstOrDefault(static a => IsKnobAttr(a.AttributeClass));
                     string? kind = attr is null ? null : KindOf(attr.AttributeClass);
-                    if (attr is not null && kind is not null) knobs.Add((p, attr, kind));
+                    if (attr is null || kind is null) break;
+                    // An enum (dropdown) knob must be on an enum property — otherwise the underlying-type
+                    // materialization has nothing to build. Flag it (SIM030) and skip, not emit broken code.
+                    if (kind == "Enum" && p.Type.TypeKind != TypeKind.Enum)
+                    {
+                        diags.Add(Diagnostic.Create(EnumKnobNotEnum, p.Locations.FirstOrDefault() ?? Location.None, p.Name));
+                        break;
+                    }
+                    knobs.Add((p, attr, kind));
                     break;
                 }
                 // Trigger knob: a parameterless void Handle_<Name>() method.
@@ -81,7 +108,8 @@ public sealed class KnobGenerator : IIncrementalGenerator
                 }
             }
         }
-        if (knobs.Count == 0 && triggers.Count == 0) return null;
+        if (knobs.Count == 0 && triggers.Count == 0)
+            return diags.Count == 0 ? null : new Result(null, null, diags.ToImmutable());
 
         bool hasNs = !model.ContainingNamespace.IsGlobalNamespace;
         string? ns = hasNs ? model.ContainingNamespace.ToDisplayString() : null;
@@ -94,18 +122,26 @@ public sealed class KnobGenerator : IIncrementalGenerator
         sb.AppendLine("{");
 
         // Backing fields + partial property implementations + knob fields.
-        foreach (var (p, _, _) in knobs)
+        foreach (var (p, _, kind) in knobs)
         {
             string t = p.Type.ToDisplayString(Fq);
             string f = "__" + p.Name;
-            sb.Append("    private ").Append(t).Append(' ').Append(f).AppendLine(" = default!;");
+            bool isEnum = kind == "Enum";
+            // Volatile needs a primitive, so an enum knob backs its value with the enum's underlying integer and
+            // casts through it on the typed (enum) property. All other kinds back the field with the property type.
+            string ft = isEnum ? Underlying(p) : t;
+            sb.Append("    private ").Append(ft).Append(' ').Append(f).AppendLine(" = default!;");
             sb.Append("    private ").Append(K).Append(".Knob? ").Append(f).AppendLine("Knob;");
             sb.Append("    public partial ").Append(t).Append(' ').Append(p.Name).AppendLine();
             sb.AppendLine("    {");
-            sb.Append("        get => ").Append(Vol).Append(".Read(ref ").Append(f).AppendLine(");");
+            if (isEnum)
+                sb.Append("        get => (").Append(t).Append(')').Append(Vol).Append(".Read(ref ").Append(f).AppendLine(");");
+            else
+                sb.Append("        get => ").Append(Vol).Append(".Read(ref ").Append(f).AppendLine(");");
             if (p.SetMethod is not null)
             {
-                sb.Append("        set { ").Append(Vol).Append(".Write(ref ").Append(f).Append(", value); ")
+                string setVal = isEnum ? "(" + ft + ")value" : "value";
+                sb.Append("        set { ").Append(Vol).Append(".Write(ref ").Append(f).Append(", ").Append(setVal).Append("); ")
                   .Append(f).AppendLine("Knob?.RaiseChanged(); }");
             }
             sb.AppendLine("    }");
@@ -135,7 +171,7 @@ public sealed class KnobGenerator : IIncrementalGenerator
         if (hasNs) sb.AppendLine("}");
 
         string hint = (hasNs ? ns + "." : "") + model.Name + ".Knobs.g.cs";
-        return (hint, sb.ToString());
+        return new Result(hint, sb.ToString(), diags.ToImmutable());
     }
 
     private static void EmitKnob(StringBuilder sb, string dispatch, IPropertySymbol p, AttributeData attr, string kind)
@@ -158,12 +194,41 @@ public sealed class KnobGenerator : IIncrementalGenerator
         AppendInt(sb, "MaxLength", Named(attr, "MaxLength"));
         AppendBool(sb, "AllowEmpty", Named(attr, "AllowEmpty"));
         AppendBool(sb, "AllowNewLine", Named(attr, "AllowNewLine"));
-        sb.Append("            ReadBoxed = () => ").Append(Vol).Append(".Read(ref ").Append(f).AppendLine("),");
-        if (writable)
-            sb.Append("            WriteBoxed = v => { ").Append(Vol).Append(".Write(ref ").Append(f).Append(", (").Append(t)
-              .Append(")v!); ").Append(dispatch).Append(".Post(() => ").Append(f).AppendLine("Knob!.RaiseChanged()); },");
+        if (kind == "Enum")
+        {
+            // Options carry (underlying value, member name); the value is exchanged as long (matching KnobOption.Value)
+            // over the enum's underlying-integer backing field.
+            AppendOptions(sb, p);
+            string ut = Underlying(p);
+            sb.Append("            ReadBoxed = () => (long)").Append(Vol).Append(".Read(ref ").Append(f).AppendLine("),");
+            if (writable)
+                sb.Append("            WriteBoxed = v => { ").Append(Vol).Append(".Write(ref ").Append(f).Append(", (").Append(ut)
+                  .Append(")(long)v!); ").Append(dispatch).Append(".Post(() => ").Append(f).AppendLine("Knob!.RaiseChanged()); },");
+        }
+        else
+        {
+            sb.Append("            ReadBoxed = () => ").Append(Vol).Append(".Read(ref ").Append(f).AppendLine("),");
+            if (writable)
+                sb.Append("            WriteBoxed = v => { ").Append(Vol).Append(".Write(ref ").Append(f).Append(", (").Append(t)
+                  .Append(")v!); ").Append(dispatch).Append(".Post(() => ").Append(f).AppendLine("Knob!.RaiseChanged()); },");
+        }
         sb.AppendLine("        };");
         sb.Append("        into.Add(").Append(f).AppendLine("Knob);");
+    }
+
+    /// <summary>The fully-qualified underlying integer type of an enum property (e.g. <c>int</c>).</summary>
+    private static string Underlying(IPropertySymbol p) =>
+        ((INamedTypeSymbol)p.Type).EnumUnderlyingType!.ToDisplayString(Fq);
+
+    /// <summary>Emits the <c>Options</c> initializer for an enum knob: one <c>KnobOption(underlyingValue, "Name")</c> per member.</summary>
+    private static void AppendOptions(StringBuilder sb, IPropertySymbol p)
+    {
+        sb.Append("            Options = new ").Append(K).AppendLine(".KnobOption[]");
+        sb.AppendLine("            {");
+        foreach (var m in ((INamedTypeSymbol)p.Type).GetMembers().OfType<IFieldSymbol>().Where(fld => fld.HasConstantValue))
+            sb.Append("                new ").Append(K).Append(".KnobOption(")
+              .Append(Convert.ToInt64(m.ConstantValue, CultureInfo.InvariantCulture)).Append("L, ").Append(Str(m.Name)).AppendLine("),");
+        sb.AppendLine("            },");
     }
 
     private static void EmitTrigger(StringBuilder sb, string dispatch, string name, AttributeData attr)
@@ -196,6 +261,7 @@ public sealed class KnobGenerator : IIncrementalGenerator
         "SimulaSharp.Kernel.Attributes.TextKnobAttribute" => "Text",
         "SimulaSharp.Kernel.Attributes.TickBoxKnobAttribute" => "Bool",
         "SimulaSharp.Kernel.Attributes.NumberKnobAttribute<T>" => "Number",
+        "SimulaSharp.Kernel.Attributes.EnumKnobAttribute" => "Enum",
         _ => null
     };
 
