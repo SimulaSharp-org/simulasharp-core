@@ -3,7 +3,7 @@
   <!-- Shared package metadata + versioning for every project in the repo. Only packable projects
        (the libraries + the meta-package) actually produce a .nupkg; tests set IsPackable=false. -->
   <PropertyGroup>
-    <Version>0.4.0</Version>
+    <Version>0.5.2</Version>
     <Authors>Andreas Michelis</Authors>
     <Company>Andreas Michelis</Company>
     <Copyright>Copyright (c) 2026 Andreas Michelis</Copyright>
