@@ -62,6 +62,47 @@ public sealed class SimClockTests
         Assert.That(t.MissionTimeUs, Is.EqualTo(EpochUs + t.SimTimeUs), "snapshot mission/sim pair is inconsistent");
     }
 
+    private sealed class FixedMissionProvider(long missionUs) : IMissionTimeProvider
+    {
+        public long MissionNowUs { get; set; } = missionUs;
+    }
+
+    [Test]
+    public void An_installed_mission_time_provider_overrides_the_default_without_touching_sim_time()
+    {
+        using var clock = new SimClock(Epoch);
+        clock.RunFor(50_000);                 // advance, then paused → horizon is stable
+        long simAfter = clock.SimNowUs;
+
+        var fes = new FixedMissionProvider(9_000_000_000L);   // a warped mission time unrelated to real time
+        clock.SetMissionTimeProvider(fes);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(clock.MissionNowUs, Is.EqualTo(9_000_000_000L), "mission time did not come from the installed provider");
+            Assert.That(clock.Now().MissionTimeUs, Is.EqualTo(9_000_000_000L), "Now() mission did not come from the provider");
+            Assert.That(clock.Now().SimTimeUs, Is.EqualTo(simAfter), "Now() sim time changed under a mission provider");
+            Assert.That(clock.SimNowUs, Is.EqualTo(simAfter), "the mission provider affected sim time");
+        });
+
+        // A live provider is read on every access — a later value is reflected immediately.
+        fes.MissionNowUs = 9_000_500_000L;
+        Assert.That(clock.MissionNowUs, Is.EqualTo(9_000_500_000L), "an updated provider value was not observed");
+    }
+
+    [Test]
+    public void Clearing_the_mission_time_provider_reverts_to_epoch_plus_horizon()
+    {
+        using var clock = new SimClock(Epoch);
+        clock.RunFor(50_000);
+        clock.SetMissionTimeProvider(new FixedMissionProvider(1L));
+        Assert.That(clock.MissionNowUs, Is.EqualTo(1L));
+
+        clock.SetMissionTimeProvider(null);   // revert to the framework default
+        Assert.That(clock.MissionNowUs, Is.EqualTo(EpochUs + clock.SimNowUs),
+            "clearing the provider did not revert to mission epoch + horizon");
+    }
+
     [Test]
     public void PauseAtSimUs_arms_an_auto_pause_and_a_manual_Pause_disarms_it()
     {

@@ -22,8 +22,15 @@ namespace SimulaSharp.Kernel.Services;
 /// </summary>
 public sealed class SimClock : IClock, IDisposable
 {
-    /// <summary>Mission epoch as microseconds since the Unix epoch (constant).</summary>
+    /// <summary>Mission epoch as microseconds since the Unix epoch (constant) — the default mission anchor.</summary>
     private readonly long _missionEpochUs;
+
+    /// <summary>
+    /// The installed mission-time provider, or null for the framework default (<see cref="_missionEpochUs"/> +
+    /// horizon). A <c>volatile</c> reference so an authority (e.g. an FES service) can swap it in from another
+    /// thread and every reader observes it immediately.
+    /// </summary>
+    private volatile IMissionTimeProvider? _missionProvider;
 
     /// <summary>Measures real time elapsed within the current running segment.</summary>
     private readonly Stopwatch _sw = new();
@@ -91,14 +98,26 @@ public sealed class SimClock : IClock, IDisposable
     public long SimNowUs => Volatile.Read(ref _horizonUs);
 
     /// <inheritdoc/>
-    public long MissionNowUs => _missionEpochUs + Volatile.Read(ref _horizonUs);
+    public long MissionNowUs
+    {
+        get
+        {
+            var provider = _missionProvider;
+            return provider is not null ? provider.MissionNowUs : _missionEpochUs + Volatile.Read(ref _horizonUs);
+        }
+    }
 
     /// <inheritdoc/>
     public TimeSnapshot Now()
     {
-        long h = Volatile.Read(ref _horizonUs);   // single read → consistent pair
-        return new TimeSnapshot(h, _missionEpochUs + h);
+        long h = Volatile.Read(ref _horizonUs);   // single read → consistent sim time
+        var provider = _missionProvider;
+        long mission = provider is not null ? provider.MissionNowUs : _missionEpochUs + h;
+        return new TimeSnapshot(h, mission);
     }
+
+    /// <inheritdoc/>
+    public void SetMissionTimeProvider(IMissionTimeProvider? provider) => _missionProvider = provider;
 
     /// <inheritdoc/>
     public bool IsRunning => _running;
