@@ -296,6 +296,36 @@ public sealed class SimulatorGeneratorTests
     }
 
     [Test]
+    public void An_empty_string_config_value_roundtrips()
+    {
+        const string world = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public partial class Cfg : ModelBase
+            {
+                public Cfg(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+                [Parameter("def")] public string Label { get; set; }
+            }
+            """;
+        var r = Run("""
+            Simulator:
+              Name: W
+              Sites:
+                - Name: Main
+                  Models:
+                    - Name: Root
+                      Type: Demo.Cfg
+                      Config:
+                        Label: ""
+            """, world);
+        // An explicit empty-string config value must reach __ApplyParameters as "" (not null → not the default).
+        Assert.That(r.AllSource, Does.Contain("[\"Label\"] = \"\""), "empty-string config value did not round-trip to a \"\" literal");
+    }
+
+    [Test]
     public void No_simulator_is_emitted_when_an_error_is_reported()
     {
         var r = Run("""

@@ -107,6 +107,30 @@ public sealed class ParameterGeneratorTests
     }
 
     [Test]
+    public void An_empty_string_default_is_applied_when_the_key_is_absent()
+    {
+        const string src = """
+            using SimulaSharp.Kernel.Attributes;
+            using SimulaSharp.Kernel.Logging;
+            using SimulaSharp.Kernel.Model;
+            using SimulaSharp.Kernel.Services;
+            namespace Demo;
+            public partial class Cfg : ModelBase
+            {
+                public Cfg(IClock c, IScheduler s, ILogger l) : base(c, s, l) { }
+                [Parameter("")] public string Label { get; set; } = "sentinel";
+            }
+            """;
+        var r = GeneratorHarness.Run(new ParameterGenerator(), src);
+        Assert.Multiple(() =>
+        {
+            // An empty string is a real default (distinct from "no default"): the else-branch must apply it.
+            Assert.That(r.AllSource, Does.Contain("Label = (string)(\"\")"), "empty-string default not applied when the key is absent");
+            Assert.That(r.AllSource, Does.Contain("Default = (string)(\"\")"), "empty-string default missing from the ParameterInfo");
+        });
+    }
+
+    [Test]
     public void A_non_partial_model_reports_SIM029()
     {
         const string source = """
