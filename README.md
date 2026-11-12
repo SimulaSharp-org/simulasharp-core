@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" alt="SimulaSharp logo" width="96" align="right" />
+
 # SimulaSharp
 
 Real-time, parallel discrete-event simulation for .NET: author models, wire them in YAML, and Roslyn generates the simulator.
