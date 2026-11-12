@@ -1,0 +1,46 @@
+# Builds and tests the framework on every PR into devel and every push to devel.
+name: CI
+
+on:
+  pull_request:
+    branches: [devel]
+  push:
+    branches: [devel]
+  workflow_dispatch:
+
+# A newer push to the same branch or PR cancels the run still in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build SimulaSharp.slnx -c Release
+
+      # Hosting and the test projects sit outside the solution, so each test project is run on its own.
+      - name: Test Kernel
+        run: dotnet test Kernel.Tests/Kernel.Tests.csproj -c Release
+
+      - name: Test CodeGen
+        run: dotnet test CodeGen.Tests/CodeGen.Tests.csproj -c Release
+
+      - name: Test Hosting
+        run: dotnet test Hosting.Tests/Hosting.Tests.csproj -c Release
