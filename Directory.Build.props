@@ -12,6 +12,7 @@
     <Company>Andreas Michelis</Company>
     <Copyright>Copyright (c) 2026 Andreas Michelis</Copyright>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageIcon>icon.png</PackageIcon>
     <PackageTags>simulation;real-time;discrete-event;hardware-in-the-loop;actor;dotnet</PackageTags>
     <PackageProjectUrl>https://simulasharp.net</PackageProjectUrl>
     <!-- Set explicitly, not derived from the git remote: a local clone may use an SSH host alias as its origin. -->
@@ -29,9 +30,10 @@
     <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
-  <!-- The MIT LICENSE ships inside every package. Guarded so non-packable projects skip it. -->
+  <!-- The MIT LICENSE and the 128x128 logo ship inside every package. Guarded so non-packable projects skip them. -->
   <ItemGroup Condition="'$(IsPackable)' != 'false'">
     <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)assets\icon.png" Pack="true" PackagePath="" Visible="false" />
   </ItemGroup>
 
 </Project>

@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/SimulaSharp-org/simulasharp-core/main/assets/icon.png" alt="SimulaSharp logo" width="64" align="right" />
+
 # SimulaSharp.Hosting
 
 The **loader** for packed [SimulaSharp](https://www.nuget.org/packages/SimulaSharp) simulations — for a runner/host (a

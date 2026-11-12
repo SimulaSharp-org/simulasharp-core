@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/SimulaSharp-org/simulasharp-core/main/assets/icon.png" alt="SimulaSharp logo" width="64" align="right" />
+
 # SimulaSharp.CodeGen
 
 The Roslyn **source generator / analyzer** for [SimulaSharp](https://www.nuget.org/packages/SimulaSharp). Referenced
